@@ -1,0 +1,34 @@
+name: "Detect pod"
+description: "Determine if a pod is running in Devcloud"
+
+inputs:
+  kubeconfig:
+    description: "Kube config secret"
+    required: true
+  release_name:
+    description: "Release name to detect"
+    required: false
+
+outputs:
+  pod-status:
+    description: "true if pod is running"
+    value: ${{ steps.find-pod.outputs.pod-status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Load .env variables
+      uses: c-py/action-dotenv-to-setenv@v2
+      with:
+        env-file: .env
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v1
+    - name: Login to k8s
+      uses: azure/k8s-set-context@v1
+      with:
+        method: kubeconfig
+        kubeconfig: ${{ inputs.kubeconfig }}
+    - name: Find pod
+      id: find-pod
+      shell: bash
+      run: echo "::set-output name=pod-status::$(.octane-ci/scripts/find-pod.sh ${{ inputs.release_name }})"
