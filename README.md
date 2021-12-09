@@ -18,7 +18,7 @@ This repository holds the public composite actions used within Octane projects.
       pod: ${{ steps.detect-pod.outputs.pod-status }}
     steps:
       - name: Find Devcloud pod
-        uses: phase2/octane-actions/actions/detect-pod@master
+        uses: phase2/octane-actions/actions/detect-pod@main
         id: detect-pod
         with:
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
