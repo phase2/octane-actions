@@ -18,9 +18,9 @@ runs:
     - name: Add environment link to pull request comment
       uses: actions/github-script@v4
       with:
-        github-token: ${{ input.token }}
+        github-token: ${{ inputs.token }}
         script: |
-          const snippet = '<h3><a href="https://${{ env.URL_ENV }}">:arrow_forward:&nbsp;&nbsp;View environment ${{ env.URL_ENV }}</a></h3>'
+          const snippet = '<h3><a href="https://${{ inputs.url }}">:arrow_forward:&nbsp;&nbsp;View environment ${{ inputs.url }}</a></h3>'
           const owner = context.payload.repository.owner.login
           const repo = context.payload.repository.name
 
@@ -31,42 +31,45 @@ runs:
           else {
             pr = ${{ steps.findPr.outputs.number }}
           }
-          console.log('PR number is ${pr}')
 
-          const data = await github
-            .request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
-              owner,
-              repo,
-              pull_number: pr,
-            })
-            .then(({ data }) => data)
+          if (pr) {
+            console.log('PR number is ${pr}')
 
-          console.log(data)
+            const data = await github
+              .request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
+                owner,
+                repo,
+                pull_number: pr,
+              })
+              .then(({ data }) => data)
 
-          const { body } = data;
+            console.log(data)
 
-          var updatedBody;
+            const { body } = data;
 
-          if (body) {
-            if (body.includes(snippet)) {
-              console.log('Description already includes deployed url');
-              return 0;
+            var updatedBody;
+
+            if (body) {
+              if (body.includes(snippet)) {
+                console.log('Description already includes deployed url');
+                return 0;
+              }
+              updatedBody = `${body} \n\n ${snippet}`;
             }
-            updatedBody = `${body} \n\n ${snippet}`;
-          }
-          else {
-            updatedBody = `${snippet}`;
-          }
+            else {
+              updatedBody = `${snippet}`;
+            }
 
-          const updateResponse = await github
-            .request('PATCH /repos/{owner}/{repo}/pulls/{pull_number}', {
-              owner,
-              repo,
-              pull_number: pr,
-              body: updatedBody,
-            })
+            const updateResponse = await github
+              .request('PATCH /repos/{owner}/{repo}/pulls/{pull_number}', {
+                owner,
+                repo,
+                pull_number: pr,
+                body: updatedBody,
+              })
 
-          if (!updateResponse) {
-            console.log(`Error while updating PR ${pr}`);
-            return 1;
+            if (!updateResponse) {
+              console.log(`Error while updating PR ${pr}`);
+              return 1;
+            }
           }
