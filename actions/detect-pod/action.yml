@@ -28,6 +28,10 @@ runs:
       with:
         method: kubeconfig
         kubeconfig: ${{ inputs.kubeconfig }}
+    - name: Debug pod
+      id: find-pod
+      shell: bash
+      run: ${{ github.action_path }}/find-pod.sh ${{ inputs.release_name }}
     - name: Find pod
       id: find-pod
       shell: bash

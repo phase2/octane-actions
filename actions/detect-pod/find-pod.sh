@@ -3,6 +3,7 @@
 # Usage: find-pod.sh release-name
 # Returns: "True" if pod is running
 
+set -x
 releaseName="$1"
 namespace=${KUBE_NAMESPACE:-${PROJECT_NAME}}
 
