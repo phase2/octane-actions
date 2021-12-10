@@ -5,8 +5,6 @@ inputs:
   url:
     description: "URL of Devcloud environment"
     required: true
-  token:
-    description: "Github token"
 
 runs:
   using: "composite"
@@ -15,31 +13,23 @@ runs:
       if: ${{ github.event_name != 'pull_request' }}
       uses: jwalton/gh-find-current-pr@v1
       id: findPr
-    - name: Set pull request number
-      if: success() && steps.findPr.outputs.number
-      shell: bash
-      run: |
-        echo "PR_NUMBER=${{ steps.findPr.outputs.number }}" >> $GITHUB_ENV
     - name: Add environment link to pull request comment
       uses: actions/github-script@v4
       with:
-        github-token: ${{ inputs.token }}
         script: |
           const snippet = '<h3><a href="https://${{ inputs.url }}">:arrow_forward:&nbsp;&nbsp;View environment ${{ inputs.url }}</a></h3>'
           const owner = context.payload.repository.owner.login
           const repo = context.payload.repository.name
 
-          console.log(context.payload)
           var pr;
           if (context.payload.event_name == 'pull_request') {
             pr = context.payload.event.number
           }
           else {
-            pr = '${{ env.PR_NUMBER }}'
+            pr = '${{ steps.findPr.outputs.number }}'
           }
 
           if (pr) {
-            console.log('PR number is ${pr}')
 
             const data = await github
               .request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
@@ -48,8 +38,6 @@ runs:
                 pull_number: pr,
               })
               .then(({ data }) => data)
-
-            console.log(data)
 
             const { body } = data;
 
