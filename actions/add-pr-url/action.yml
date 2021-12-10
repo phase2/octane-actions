@@ -1,0 +1,70 @@
+name: "Add URL to Pull request"
+description: "Add environment url to pull request description"
+
+inputs:
+  url:
+    description: "URL of Devcloud environment"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Get associated pull request
+      if: ${{ github.event_name != 'pull_request' }}
+      uses: jwalton/gh-find-current-pr@v1
+      id: findPr
+    - name: Add environment link to pull request comment
+      uses: actions/github-script@v4
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const snippet = '<h3><a href="https://${{ env.URL_ENV }}">:arrow_forward:&nbsp;&nbsp;View environment ${{ env.URL_ENV }}</a></h3>'
+          const owner = context.payload.repository.owner.login
+          const repo = context.payload.repository.name
+
+          var pr;
+          if (context.payload.event_name == 'pull_request') {
+            pr = context.payload.event.number
+          }
+          else {
+            pr = ${{ steps.findPr.outputs.number }}
+          }
+          console.log('PR number is ${pr}')
+
+          const data = await github
+            .request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
+              owner,
+              repo,
+              pull_number: pr,
+            })
+            .then(({ data }) => data)
+
+          console.log(data)
+
+          const { body } = data;
+
+          var updatedBody;
+
+          if (body) {
+            if (body.includes(snippet)) {
+              console.log('Description already includes deployed url');
+              return 0;
+            }
+            updatedBody = `${body} \n\n ${snippet}`;
+          }
+          else {
+            updatedBody = `${snippet}`;
+          }
+
+          const updateResponse = await github
+            .request('PATCH /repos/{owner}/{repo}/pulls/{pull_number}', {
+              owner,
+              repo,
+              pull_number: pr,
+              body: updatedBody,
+            })
+
+          if (!updateResponse) {
+            console.log(`Error while updating PR ${pr}`);
+            return 1;
+          }
