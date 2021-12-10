@@ -16,7 +16,6 @@ runs:
     - name: Add environment link to pull request comment
       uses: actions/github-script@v4
       with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
           const snippet = '<h3><a href="https://${{ env.URL_ENV }}">:arrow_forward:&nbsp;&nbsp;View environment ${{ env.URL_ENV }}</a></h3>'
           const owner = context.payload.repository.owner.login
