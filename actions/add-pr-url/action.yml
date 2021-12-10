@@ -15,6 +15,10 @@ runs:
       if: ${{ github.event_name != 'pull_request' }}
       uses: jwalton/gh-find-current-pr@v1
       id: findPr
+    - name: Set pull request number
+      if: success() && steps.findPr.outputs.number
+      run: |
+        echo "PR_NUMBER=${{ steps.findPr.outputs.number }}" >> $GITHUB_ENV
     - name: Add environment link to pull request comment
       uses: actions/github-script@v4
       with:
@@ -24,12 +28,13 @@ runs:
           const owner = context.payload.repository.owner.login
           const repo = context.payload.repository.name
 
+          console.log(context.payload)
           var pr;
           if (context.payload.event_name == 'pull_request') {
             pr = context.payload.event.number
           }
           else {
-            pr = ${{ steps.findPr.outputs.number }}
+            pr = ${{ env.PR_NUMBER }}
           }
 
           if (pr) {
