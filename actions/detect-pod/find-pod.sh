@@ -5,7 +5,8 @@
 #     defaults to current branch
 # Returns: "true" if pod is running
 
-source .functions.sh
+set -x
+source $(dirname $0)/.functions.sh
 
 if [[ -e ".env" ]]; then
   export $(grep -v '^#' ".env" | xargs)
