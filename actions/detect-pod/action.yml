@@ -17,10 +17,6 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Load .env variables
-      uses: c-py/action-dotenv-to-setenv@v2
-      with:
-        env-file: .env
     - name: Setup kubectl
       uses: azure/setup-kubectl@v1
     - name: Login to k8s
