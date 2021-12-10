@@ -5,7 +5,6 @@
 #     defaults to current branch
 # Returns: "true" if pod is running
 
-set -x
 source $(dirname $0)/.functions.sh
 
 if [[ -e ".env" ]]; then
