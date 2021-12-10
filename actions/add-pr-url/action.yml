@@ -17,6 +17,7 @@ runs:
       id: findPr
     - name: Set pull request number
       if: success() && steps.findPr.outputs.number
+      shell: bash
       run: |
         echo "PR_NUMBER=${{ steps.findPr.outputs.number }}" >> $GITHUB_ENV
     - name: Add environment link to pull request comment
