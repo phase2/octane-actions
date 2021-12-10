@@ -31,4 +31,4 @@ runs:
     - name: Find pod
       id: find-pod
       shell: bash
-      run: echo "::set-output name=pod-status::$(.octane-ci/scripts/find-pod.sh ${{ inputs.release_name }})"
+      run: echo "::set-output name=pod-status::$(${{ github.action_path }}/goodbye.sh/find-pod.sh ${{ inputs.release_name }})"
