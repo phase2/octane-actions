@@ -35,7 +35,7 @@ runs:
             pr = context.payload.event.number
           }
           else {
-            pr = ${{ env.PR_NUMBER }}
+            pr = '${{ env.PR_NUMBER }}'
           }
 
           if (pr) {
