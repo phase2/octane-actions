@@ -5,6 +5,9 @@ inputs:
   url:
     description: "URL of Devcloud environment"
     required: true
+  token:
+    description: "Github token"
+    required: true
 
 runs:
   using: "composite"
@@ -16,6 +19,7 @@ runs:
     - name: Add environment link to pull request comment
       uses: actions/github-script@v4
       with:
+        token: ${{ input.token }}
         script: |
           const snippet = '<h3><a href="https://${{ env.URL_ENV }}">:arrow_forward:&nbsp;&nbsp;View environment ${{ env.URL_ENV }}</a></h3>'
           const owner = context.payload.repository.owner.login
