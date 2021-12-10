@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Determine if a pod for a release is running
 # Usage: find-pod.sh release-name
-# Returns: "True" if pod is running
+# Returns: "true" if pod is running
 
-set -x
 releaseName="$1"
 namespace=${KUBE_NAMESPACE:-${PROJECT_NAME}}
 
@@ -15,4 +14,4 @@ fi
 
 # Determine the name of the webcontainer pod for this namespace.
 podName=$(kubectl get pods -n ${namespace} -l release=$releaseName,webcontainer=true -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}')
-echo "$podName"
+echo "$podName" | tr '[:upper:]' '[:lower:]'
