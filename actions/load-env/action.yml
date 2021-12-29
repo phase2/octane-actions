@@ -1,0 +1,16 @@
+name: "Load environment"
+description: "Load environment variables"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Load .env variables
+      uses: c-py/action-dotenv-to-setenv@v2
+      with:
+        env-file: ${{ github.workspace }}/.env
+    - name: Update config/cache paths
+      shell: bash
+      env:
+        GITHUB_REPO: ${{ github.repository }}
+        PROJECT_ROOT: ${{ github.workspace }}
+      run: ${{ github.action_path }}/update-env.sh
