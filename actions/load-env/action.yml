@@ -9,6 +9,12 @@ runs:
       uses: c-py/action-dotenv-to-setenv@v2
       with:
         env-file: .env
+    - name: Debug
+      shell: bash
+      run: |
+        pwd
+        ls -al
+        ls -al ${{ github.action_path }}
     - name: Update config/cache paths
       shell: bash
       env:

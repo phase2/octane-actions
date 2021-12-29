@@ -1,6 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Update config/cache environment variables.
 # Prevents Github runners from sharing config/cache across projects
+
+set -x
 
 if [[ -e ".env" ]]; then
   export $(grep -v '^#' ".env" | xargs)
