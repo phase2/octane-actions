@@ -16,12 +16,12 @@ This repository holds the public composite actions used within Octane projects.
     steps:
       - name: Load environment variables
         uses: phase2/octane-actions/actions/load-env@main
-        
+
       ...do other stuff...
 ```
 
 Loads the `.env` file into the environment variables and also sets several other
-global environment variables: `CI_REGISTRY`, `CI_URL`, `WEB_IMAGE`.
+global environment variables: `CI_REGISTRY`, `CI_URL`, `CI_BRANCH`, `WEB_IMAGE`.
 Also overrides the config/cache paths for tools like `helm` and `yarn` to prevent
 projects in the same Github runner from colliding.
 

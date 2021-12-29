@@ -4,10 +4,16 @@ description: "Load environment variables"
 runs:
   using: "composite"
   steps:
+    - name: Debug
+      shell: bash
+      run: |
+        pwd
+        ls -al
+        cat .env
     - name: Load .env variables
       uses: c-py/action-dotenv-to-setenv@v2
       with:
-        env-file: ${{ github.workspace }}/.env
+        env-file: .env
     - name: Update config/cache paths
       shell: bash
       env:
