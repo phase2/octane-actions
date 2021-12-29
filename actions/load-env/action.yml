@@ -4,12 +4,6 @@ description: "Load environment variables"
 runs:
   using: "composite"
   steps:
-    - name: Debug
-      shell: bash
-      run: |
-        pwd
-        ls -al
-        cat .env
     - name: Load .env variables
       uses: c-py/action-dotenv-to-setenv@v2
       with:
@@ -18,5 +12,4 @@ runs:
       shell: bash
       env:
         GITHUB_REPO: ${{ github.repository }}
-        PROJECT_ROOT: ${{ github.workspace }}
       run: ${{ github.action_path }}/update-env.sh
