@@ -10,10 +10,11 @@ runs:
   using: "composite"
   steps:
     - name: Get associated pull request
-      if: ${{ github.event_name != 'pull_request' }}
+      if: ${{ github.event_name == 'push' }}
       uses: jwalton/gh-find-current-pr@v1
       id: findPr
     - name: Add environment link to pull request comment
+      if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
       uses: actions/github-script@v4
       with:
         script: |
