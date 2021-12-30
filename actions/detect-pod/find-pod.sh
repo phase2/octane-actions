@@ -16,6 +16,6 @@ releaseName=$(release_name $1)
 
 # Determine the name of the webcontainer pod for this namespace.
 namespace=${KUBE_NAMESPACE:-$GENERATOR_NAMESPACE}
-namespace=${namespace:-${projectName}}
+namespace=${namespace:-${PROJECT_NAME}}
 podName=$(kubectl get pods -n ${namespace} -l release=$releaseName,webcontainer=true -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}')
 echo -n "$podName" | tr '[:upper:]' '[:lower:]'
