@@ -1,0 +1,25 @@
+name: "Publish pages"
+description: "Publish content to Pages server"
+
+inputs:
+  project_name:
+    description: "Name of project folder"
+    required: true
+  source:
+    description: "Source folder of content"
+    required: true
+  dest:
+    description: "Destination subfolder for content"
+    required: true
+  kubeconfig:
+    description: "Kubernetes config secret from PAGES_KUBE"
+    required: true
+
+runs:
+  using: docker
+  image: Dockerfile
+  args:
+    - ${{ inputs.project_name }}
+    - ${{ inputs.source }}
+    - ${{ inputs.dest }}
+    - ${{ inputs.kubeconfig }}
