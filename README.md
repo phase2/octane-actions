@@ -87,3 +87,52 @@ Determine if a pod is running in the Devcloud. Sets the output to "True" if the 
 ```
 
 Adds a link to the specified URL to the end of the description text for the related pull request.
+
+## publish
+> Usage: 
+* `phase2/octane-actions/actions/publish@main`
+> Inputs: 
+* `project_name`: the project name
+* `source`: the source path to the content to publish
+* `dest`: the destination path in the Pages server
+* `kubeconfig`: the ${{ secrets.PAGES_KUBE }} kubernetes config
+
+> Example:
+```
+- name: Publish content to Pages
+  uses: phase2/octane-actions/actions/publish@main
+  with:
+    project_name: ${{ env.PROJECT_NAME }}
+    source: SOURCE_PATH
+    dest: DEST_PATH
+    kubeconfig: ${{ secrets.PAGES_KUBE }}
+```
+Publish a folder of static content to the Phase2 Pages server,
+where the `SOURCE_PATH` is the relative path from your project repo root to the files you want to publish and
+`DEST_PATH` is the subfolder/path you want to make available on the Pages server.
+
+The URL of your pages will be exported to the `PAGES_URL` environment variable.
+
+**NOTE:** *Can only be called from with a private Phase2 repository.*
+
+## remove-pages
+> Usage: 
+* `phase2/octane-actions/actions/remove-pages@main`
+> Inputs: 
+* `project_name`: the project name
+* `dest`: the destination path in the Pages server
+* `kubeconfig`: the ${{ secrets.PAGES_KUBE }} kubernetes config
+
+> Example:
+```
+- name: Remove content from Pages
+  uses: phase2/octane-actions/actions/remove-pages@main
+  with:
+    project_name: ${{ env.PROJECT_NAME }}
+    dest: DEST_PATH
+    kubeconfig: ${{ secrets.PAGES_KUBE }}
+```
+Remove content from the Pages server,
+where `DEST_PATH` is the subfolder/path you want to remove for the given project.
+
+**NOTE:** *Can only be called from with a private Phase2 repository.*
