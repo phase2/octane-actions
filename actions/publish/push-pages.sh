@@ -37,7 +37,8 @@ else
   exit 1
 fi
 
-export PAGES_URL="https://pages.${CI_URL}/${destPath}"
+urlPath=$(echo "$destPath" | sed 's#^docroot/##' )
+export PAGES_URL="https://pages.${CI_URL}/${urlPath}"
 if [[ ! -z "$GITHUB_ENV" && -e "$GITHUB_ENV" ]]; then
   echo "PAGES_URL=${PAGES_URL}" >> $GITHUB_ENV
 fi
