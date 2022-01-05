@@ -1,0 +1,21 @@
+name: "Remove from Pages"
+description: "Remove content from Phase2 Pages server"
+
+inputs:
+  project_name:
+    description: "Name of project folder"
+    required: true
+  dest:
+    description: "Destination subfolder for content"
+    required: true
+  kubeconfig:
+    description: "Kubernetes config secret from PAGES_KUBE"
+    required: true
+
+runs:
+  using: docker
+  image: Dockerfile
+  args:
+    - ${{ inputs.project_name }}
+    - ${{ inputs.dest }}
+    - ${{ inputs.kubeconfig }}
