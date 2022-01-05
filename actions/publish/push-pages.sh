@@ -37,4 +37,9 @@ else
   exit 1
 fi
 
+export PAGES_URL="https://pages.${CI_URL}/${destPath}"
+if [[ ! -z "$GITHUB_ENV" && -e "$GITHUB_ENV" ]]; then
+  echo "PAGES_URL=${PAGES_URL}" >> $GITHUB_ENV
+fi
+
 rm -rf ${tarPath}
