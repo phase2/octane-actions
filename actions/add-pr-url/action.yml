@@ -5,6 +5,9 @@ inputs:
   url:
     description: "URL of Devcloud environment"
     required: true
+  caption:
+    description: "Override caption for the link"
+    required: false
 
 runs:
   using: "composite"
@@ -18,7 +21,11 @@ runs:
       uses: actions/github-script@v4
       with:
         script: |
-          const snippet = '<h3><a href="https://${{ inputs.url }}">:arrow_forward:&nbsp;&nbsp;View environment ${{ inputs.url }}</a></h3>'
+          const caption = '${{ inputs.caption }}'
+          if (! caption) {
+            caption = 'View environment ${{ inputs.url }}'
+          }
+          const snippet = `<h3><a href="https://${{ inputs.url }}">:arrow_forward:&nbsp;&nbsp;${caption}</a></h3>`
           const owner = context.payload.repository.owner.login
           const repo = context.payload.repository.name
 
