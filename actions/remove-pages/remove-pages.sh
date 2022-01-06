@@ -16,7 +16,7 @@ if [ "$1" == "/" ]; then
   echo "Cannot remove root folder"
   exit 1
 fi
-if [ ! -z "$(echo $1 | grep '.')" ]; then
+if [ ! -z "$(echo $1 | grep '\.')" ]; then
   echo "Path cannot contain dots"
   exit 1
 fi
