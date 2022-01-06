@@ -67,6 +67,7 @@ Determine if a pod is running in the Devcloud. Sets the output to "True" if the 
 * `phase2/octane-actions/actions/add-pr-url@main`
 > Inputs: 
 * `url`: the URL to add to the PR description
+* `caption`: Optional caption for the link.  Defaults to using the URL as the caption.
 
 > Example:
 ```
@@ -84,6 +85,7 @@ Determine if a pod is running in the Devcloud. Sets the output to "True" if the 
         if: ${{ env.URL_ENV }}
         with:
           url: ${{ env.URL_ENV }}
+          caption: View Drupal site
 ```
 
 Adds a link to the specified URL to the end of the description text for the related pull request.
