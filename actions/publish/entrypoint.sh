@@ -2,12 +2,12 @@
 script=$(readlink -f "$0")
 scriptDir=$(dirname "$script")
 
-# Name of the top-level folder in pages
-projectName=${1}
 # Local source path
-source=${2}
+source=${1}
 # Remote file path in pages server
-dest=${3}
+dest=${2}
+# Name of the top-level folder in pages
+projectName=${4:-PROJECT_NAME}
 
 if [ -z "$projectName" ]; then
   echo "ERROR: Pages project_name cannot be empty."
@@ -40,7 +40,7 @@ fi
 
 # Create the kube config
 mkdir -p $HOME/.kube
-echo -n "$4" >$HOME/.kube/config
+echo -n "$3" >$HOME/.kube/config
 
 # A project-specific name for the intermediate tarball.
 saltCmd=$(which md5 2>/dev/null || which md5sum 2>/dev/null)

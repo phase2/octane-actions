@@ -4,7 +4,7 @@ description: "Publish content to Pages server"
 inputs:
   project_name:
     description: "Name of project folder"
-    required: true
+    required: false
   source:
     description: "Source folder of content"
     required: true
@@ -19,7 +19,7 @@ runs:
   using: docker
   image: Dockerfile
   args:
-    - ${{ inputs.project_name }}
-    - ${{ inputs.source }}
-    - ${{ inputs.dest }}
-    - ${{ inputs.kubeconfig }}
+    - "${{ inputs.source }}"
+    - "${{ inputs.dest }}"
+    - "${{ inputs.kubeconfig }}"
+    - "${{ inputs.project_name }}"
