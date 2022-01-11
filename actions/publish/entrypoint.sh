@@ -9,6 +9,35 @@ source=${2}
 # Remote file path in pages server
 dest=${3}
 
+if [ -z "$projectName" ]; then
+  echo "ERROR: Pages project_name cannot be empty."
+  exit 1
+fi
+if [ "$projectName" == "/" ]; then
+  echo "ERROR: Pages project_name cannot be root folder"
+  exit 1
+fi
+if [ ! -z "$(echo $projectName | grep '\.')" ]; then
+  echo "ERROR: Pages project_name cannot contain dots"
+  exit 1
+fi
+if [ ! -d "$source" ]; then
+  echo "ERROR: Pages source path must be a directory."
+  exit 1
+fi
+if [ -z "$dest" ]; then
+  echo "ERROR: Pages destination cannot be empty."
+  exit 1
+fi
+if [ "$dest" == "/" ]; then
+  echo "ERROR: Pages destination cannot be root folder"
+  exit 1
+fi
+if [ ! -z "$(echo $dest | grep '\.')" ]; then
+  echo "ERROR: Pages destination cannot contain dots"
+  exit 1
+fi
+
 # Create the kube config
 mkdir -p $HOME/.kube
 echo -n "$4" >$HOME/.kube/config
