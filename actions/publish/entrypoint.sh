@@ -7,7 +7,7 @@ source=${1}
 # Remote file path in pages server
 dest=${2}
 # Name of the top-level folder in pages
-projectName=${4:-PROJECT_NAME}
+projectName=${4:-$PROJECT_NAME}
 
 if [ -z "$projectName" ]; then
   echo "ERROR: Pages project_name cannot be empty."
