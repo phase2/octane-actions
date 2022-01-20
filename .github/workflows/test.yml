@@ -54,13 +54,15 @@ jobs:
     needs: [changes]
     #if: ${{ needs.changes.outputs.load-env == 'true' }}
     steps:
+      - name: Check out the repo
+        uses: actions/checkout@v2
       - name: Load environment
         uses: phase2/octane-actions/actions/load-env@develop
       - name: Get results
         run: |
           result=0
           env
-          if [ "${{ env.PROJECT_NAME }}" != "octane-actions" ]; then
+          if [ "$PROJECT_NAME" != "octane-actions" ]; then
             echo "ERROR loading .env file"
             result=1
           fi
