@@ -138,3 +138,9 @@ Remove content from the Pages server,
 where `DEST_PATH` is the subfolder/path you want to remove for the given project.
 
 **NOTE:** *Can only be called from with a private Phase2 repository.*
+
+## Contributing to this repository
+
+When making updates to this repository, be sure to make changes to a local `develop` branch
+rather than the `main` branch.  Create a PR for the change. 
+Automated test actions will run against the `develop` branch.
