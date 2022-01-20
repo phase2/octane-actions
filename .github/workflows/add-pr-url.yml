@@ -15,7 +15,6 @@ jobs:
 
   test:
     name: Test add-pr-url
-    runs-on: self-hosted
     steps:
       # Steps run at the beginning of each job.
       - name: Dump GitHub context
