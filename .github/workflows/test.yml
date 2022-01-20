@@ -74,4 +74,8 @@ jobs:
             echo "ERROR setting CI_BRANCH"
             result=1
           fi
+          if [[ ! -z $(which npm 2>/dev/null || echo "") ]]; then
+            echo "Testing npm config"
+            npm config get prefix
+          fi
           exit $result
