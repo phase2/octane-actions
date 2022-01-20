@@ -33,8 +33,10 @@ jobs:
           filters: |
             add-pr-url:
               - 'actions/add-pr-url/**'
+              - 'github/workflows/test.yml'
             load-env:
               - 'actions/load-env/**'
+              - 'github/workflows/test.yml'
 
   test-add-pr-url:
     name: Test add-pr-url
@@ -52,30 +54,38 @@ jobs:
     name: Test load-env
     runs-on: ubuntu-latest
     needs: [changes]
-    #if: ${{ needs.changes.outputs.load-env == 'true' }}
+    if: ${{ needs.changes.outputs.load-env == 'true' }}
     steps:
       - name: Check out the repo
         uses: actions/checkout@v2
       - name: Load environment
         uses: phase2/octane-actions/actions/load-env@develop
-      - name: Get results
+      - name: Environment vars
+        run: env
+      - name: Validate results
         run: |
           result=0
-          env
+          echo "PROJECT_NAME: $PROJECT_NAME"
           if [ "$PROJECT_NAME" != "octane-actions" ]; then
             echo "ERROR loading .env file"
             result=1
           fi
+          echo "CI_URL: $CI_URL"
           if [ "$CI_URL" != "devcloud.fayze2.com" ]; then
             echo "ERROR setting CI_URL"
             result=1
           fi
+          echo "CI_BRANCH: $CI_BRANCH"
           if [ "$CI_BRANCH" != "develop" ]; then
             echo "ERROR setting CI_BRANCH"
             result=1
           fi
           if [[ ! -z $(which npm 2>/dev/null || echo "") ]]; then
-            echo "Testing npm config"
-            npm config get prefix
+            npmConfig=$(npm config get prefix)
+            echo "npm config get prefix: $npmConfig"
+            if [ "$npmConfig" != "/home/runner/work/octane-actions/octane-actions/.config/npm/global" ]; then
+              echo "ERROR setting npm config"
+              result=1
+            fi
           fi
           exit $result
