@@ -1,0 +1,31 @@
+name: 'Test add-pr-url'
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - issue/**
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+
+  test:
+    name: Test add-pr-url
+    runs-on: self-hosted
+    steps:
+      # Steps run at the beginning of each job.
+      - name: Dump GitHub context
+        env:
+          GITHUB_CONTEXT: ${{ toJSON(github) }}
+        run: echo "$GITHUB_CONTEXT"
+      - name: Check out the repo
+        uses: actions/checkout@v2
+      - name: Add url link to PR
+        uses: phase2/octane-actions/actions/add-pr-url@main
+        with:
+          url: www.example.com
+          caption: Test Link
