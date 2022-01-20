@@ -25,7 +25,7 @@ runs:
           if (! caption) {
             caption = 'View environment ${{ inputs.url }}'
           }
-          const snippet = `<h3><a href="https://${{ inputs.url }}">:arrow_forward:&nbsp;&nbsp;${caption}</a></h3>`
+          const snippet = `<h3><a href="https://${{ inputs.url }}">:arrow_forward:&nbsp;&nbsp;${caption} TEST</a></h3>`
           const owner = context.payload.repository.owner.login
           const repo = context.payload.repository.name
 
