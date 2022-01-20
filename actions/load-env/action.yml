@@ -29,6 +29,12 @@ runs:
         mkdir -p ${HELM_DATA_HOME}
         export YARN_CACHE_FOLDER=${rootDir}/.config/yarn/cache
         mkdir -p ${YARN_CACHE_FOLDER}
+        if [[ ! -z $(which npm 2>/dev/null || echo "") ]]; then
+          mkdir -p ${rootDir}/.config/npm/global
+          mkdir -p ${rootDir}/.config/npm/cache
+          npm config set prefix ${rootDir}/.config/npm/global
+          npm config set cache ${rootDir}/.config/npm/cache
+        fi
 
         # Export these variables into the GITHUB_ENV file
         varList=(
