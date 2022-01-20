@@ -1,5 +1,5 @@
 name: "Load environment"
-description: "Load environment variables test"
+description: "Load environment variables"
 
 runs:
   using: "composite"
