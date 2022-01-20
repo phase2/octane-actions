@@ -11,6 +11,9 @@ defaults:
   run:
     shell: bash
 
+env:
+  ACTION_BRANCH: main
+
 jobs:
 
   changes:
@@ -44,7 +47,7 @@ jobs:
       - name: Check out the repo
         uses: actions/checkout@v2
       - name: Add url link to PR
-        uses: phase2/octane-actions/actions/add-pr-url@${{ github.ref_name }}
+        uses: phase2/octane-actions/actions/add-pr-url@${{ env.ACTION_BRANCH }}
         with:
           url: www.example.com
           caption: Test Link
