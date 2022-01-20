@@ -15,6 +15,7 @@ jobs:
 
   test:
     name: Test add-pr-url
+    runs-on: ubuntu-latest
     steps:
       # Steps run at the beginning of each job.
       - name: Dump GitHub context
