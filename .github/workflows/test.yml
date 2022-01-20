@@ -33,10 +33,10 @@ jobs:
           filters: |
             add-pr-url:
               - 'actions/add-pr-url/**'
-              - 'github/workflows/test.yml'
+              - '.github/workflows/test.yml'
             load-env:
               - 'actions/load-env/**'
-              - 'github/workflows/test.yml'
+              - '.github/workflows/test.yml'
 
   test-add-pr-url:
     name: Test add-pr-url
