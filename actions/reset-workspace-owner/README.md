@@ -4,6 +4,11 @@ Code forked from https://github.com/peter-murray/reset-workspace-ownership-actio
 to also update ownership of files in $HOME since some containers like Cypress also create
 files owned by root in the $HOME folder (`_work/_temp/_github_home` in the runner)
 
+> Usage: 
+* `phase2/octane-actions/actions/reset-workspace-owner@main`
+> Inputs: 
+* `user_id`: optional user ID to set file ownership.  Defaults to 1000.
+
 Original README is here:
 
 # reset-workspace-ownership-action
