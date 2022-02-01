@@ -139,12 +139,6 @@ where `DEST_PATH` is the subfolder/path you want to remove for the given project
 
 **NOTE:** *Can only be called from with a private Phase2 repository.*
 
-## Contributing to this repository
-
-When making updates to this repository, be sure to make changes to a local `develop` branch
-rather than the `main` branch.  Create a PR for the change. 
-Automated test actions will run against the `develop` branch.
-
 ## reset-workspace-owner
 > Usage: 
 * `phase2/octane-actions/actions/reset-workspace-owner@main`
@@ -154,3 +148,9 @@ Automated test actions will run against the `develop` branch.
 This action is used to clean up file ownership in the Github runner workspace and home folder.
 Some containers that run as root can leave behind files owned by root that can cause
 errors when checking out code.
+
+## Contributing to this repository
+
+When making updates to this repository, be sure to make changes to a local `develop` branch
+rather than the `main` branch.  Create a PR for the change. 
+Automated test actions will run against the `develop` branch.
