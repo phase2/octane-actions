@@ -144,3 +144,13 @@ where `DEST_PATH` is the subfolder/path you want to remove for the given project
 When making updates to this repository, be sure to make changes to a local `develop` branch
 rather than the `main` branch.  Create a PR for the change. 
 Automated test actions will run against the `develop` branch.
+
+## reset-workspace-owner
+> Usage: 
+* `phase2/octane-actions/actions/reset-workspace-owner@main`
+> Inputs: 
+* `user_id`: optional user ID to set file ownership.  Defaults to 1000.
+
+This action is used to clean up file ownership in the Github runner workspace and home folder.
+Some containers that run as root can leave behind files owned by root that can cause
+errors when checking out code.

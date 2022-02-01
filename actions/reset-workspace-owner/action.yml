@@ -5,6 +5,7 @@ inputs:
   user_id:
     description: The user id to change the owner to when not matched
     required: true
+    default: 1000
 
   workspace_path:
     description: The path to the workspace to process
