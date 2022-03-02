@@ -35,6 +35,8 @@ runs:
           npm config set prefix ${rootDir}/.config/npm/global
           npm config set cache ${rootDir}/.config/npm/cache
         fi
+        export npm_config_cache=${rootDir}/.config/node/cache
+        mkdir -p ${npm_config_cache}
 
         # Export these variables into the GITHUB_ENV file
         varList=(
@@ -46,6 +48,7 @@ runs:
           "HELM_CACHE_HOME"
           "HELM_DATA_HOME"
           "YARN_CACHE_FOLDER"
+          "npm_config_cache"
         )
         if [[ ! -z "$GITHUB_ENV" && -e "$GITHUB_ENV" ]]; then
           for varName in "${varList[@]}"; do
