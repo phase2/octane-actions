@@ -93,18 +93,3 @@ jobs:
             fi
           fi
           exit $result
-
-  test-cypress:
-    name: Test Cypress
-    runs-on: ubuntu-latest
-    needs: [changes]
-    if: ${{ needs.changes.outputs.cypress == 'true' }}
-    steps:
-      - name: Run Cypress
-        uses: phase2/octane-actions/actions/cypress@develop
-        with:
-          version: 4.12.0
-          test: mytest
-          site: mysite
-          base_url: mybase
-          ref_url: myref
