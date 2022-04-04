@@ -12,6 +12,11 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Dump GitHub context
+      shell: bash
+      env:
+        GITHUB_CONTEXT: ${{ toJSON(github) }}
+      run: echo "$GITHUB_CONTEXT"
     - name: Get associated pull request
       if: ${{ github.event_name == 'push' }}
       uses: jwalton/gh-find-current-pr@v1
@@ -39,6 +44,7 @@ runs:
 
           if (pr) {
 
+            console.log(`Fetching description from PR ${pr}`);
             const data = await github
               .request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
                 owner,
@@ -56,9 +62,11 @@ runs:
                 console.log('Description already includes deployed url');
                 return 0;
               }
+              console.log(`Adding link to existing body`);
               updatedBody = `${body} \n\n ${snippet}`;
             }
             else {
+              console.log(`Adding link to empty body`);
               updatedBody = `${snippet}`;
             }
 
