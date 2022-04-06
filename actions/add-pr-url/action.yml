@@ -12,11 +12,6 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Dump GitHub context
-      shell: bash
-      env:
-        GITHUB_CONTEXT: ${{ toJSON(github) }}
-      run: echo "$GITHUB_CONTEXT"
     - name: Get associated pull request
       if: ${{ github.event_name == 'push' }}
       uses: jwalton/gh-find-current-pr@v1
@@ -35,26 +30,30 @@ runs:
           const repo = context.payload.repository.name
 
           var pr;
-          if (context.payload.event_name == 'pull_request') {
-            pr = context.payload.event.number
+          var body;
+
+          if (context.payload.pull_request) {
+            pr = context.payload.pull_request.number
+            body = context.payload.pull_request.body
+            console.log(`Updating description from PR ${pr}`);
           }
           else {
             pr = '${{ steps.findPr.outputs.number }}'
+            console.log(`Fetching description from PR ${pr}`);
+            if (pr) {
+              const data = await github
+                .request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
+                  owner,
+                  repo,
+                  pull_number: pr,
+                })
+                .then(({ data }) => data)
+
+              const { body } = data;
+            }
           }
 
           if (pr) {
-
-            console.log(`Fetching description from PR ${pr}`);
-            const data = await github
-              .request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
-                owner,
-                repo,
-                pull_number: pr,
-              })
-              .then(({ data }) => data)
-
-            const { body } = data;
-
             var updatedBody;
 
             if (body) {
