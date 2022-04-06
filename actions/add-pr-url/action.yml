@@ -21,6 +21,7 @@ runs:
       uses: actions/github-script@v4
       with:
         script: |
+          console.log(context.payload)
           var caption = '${{ inputs.caption }}'
           if (! caption) {
             caption = 'View environment ${{ inputs.url }}'
