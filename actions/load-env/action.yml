@@ -50,6 +50,8 @@ runs:
           "CI_URL"
           "CI_BRANCH"
           "WEB_IMAGE"
+          "CLI_IMAGE"
+          "DEFAULT_DOCKER_IMAGE"
           "HELM_CONFIG_HOME"
           "HELM_CACHE_HOME"
           "HELM_DATA_HOME"
