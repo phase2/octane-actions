@@ -8,6 +8,11 @@ inputs:
   caption:
     description: "Override caption for the link"
     required: false
+  fetch:
+    description: Whether to force PR body fetched via API
+    type: boolean
+    required: false
+    default: false
 
 runs:
   using: "composite"
@@ -31,6 +36,7 @@ runs:
           const snippet = `<h3><a href="https://${{ inputs.url }}">:arrow_forward:&nbsp;&nbsp;${caption}</a></h3>`
           const owner = context.payload.repository.owner.login
           const repo = context.payload.repository.name
+          let fetch_body = '${{ inputs.fetch }}'
 
           let pr;
           let body;
@@ -38,25 +44,31 @@ runs:
           if (context.payload.pull_request) {
             pr = context.payload.pull_request.number
             body = context.payload.pull_request.body
-            console.log(`Updating description from PR ${pr}`);
           }
           else {
             pr = '${{ steps.findPr.outputs.number }}'
-            console.log(`Fetching description from PR ${pr}`);
-            if (pr) {
-              const data = await github
-                .request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
-                  owner,
-                  repo,
-                  pull_number: pr,
-                })
-                .then(({ data }) => data)
-
-              body = data.body;
-            }
+            fetch_body = 'true'
           }
 
           if (pr) {
+            if (fetch_body === 'true') {
+              console.log(`Fetching description from PR ${pr}`);
+              if (pr) {
+                const data = await github
+                  .request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
+                    owner,
+                    repo,
+                    pull_number: pr,
+                  })
+                  .then(({ data }) => data)
+
+                body = data.body;
+              }
+            }
+            else {
+              console.log(`Updating description from PR ${pr}`);
+            }
+
             let updatedBody;
 
             console.log(`Body being processed:`);

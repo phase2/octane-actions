@@ -49,6 +49,12 @@ jobs:
         with:
           url: www.example.com
           caption: Test Link
+      - name: Add second url link to PR
+        uses: phase2/octane-actions/actions/add-pr-url@develop
+        with:
+          url: www.google.com
+          caption: Second Test Link
+          fetch: true
 
   test-load-env:
     name: Test load-env
