@@ -64,6 +64,7 @@ runs:
 
                 body = data.body;
               }
+            }
             else {
               console.log(`Updating description from PR ${pr}`);
             }
