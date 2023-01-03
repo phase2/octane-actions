@@ -18,13 +18,13 @@ runs:
   using: "composite"
   steps:
     - name: Setup kubectl
-      uses: azure/setup-kubectl@v1
+      uses: azure/setup-kubectl@v3
     - name: Login to k8s
-      uses: azure/k8s-set-context@v1
+      uses: azure/k8s-set-context@v3
       with:
         method: kubeconfig
         kubeconfig: ${{ inputs.kubeconfig }}
     - name: Find pod
       id: find-pod
       shell: bash
-      run: echo "::set-output name=pod-status::$(${{ github.action_path }}/find-pod.sh ${{ inputs.release_name }})"
+      run: echo "pod-status=$(${{ github.action_path }}/find-pod.sh ${{ inputs.release_name }})" >> $GITHUB_OUTPUT
