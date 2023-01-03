@@ -27,4 +27,4 @@ runs:
     - name: Find pod
       id: find-pod
       shell: bash
-      run: echo "pod-status=$(${{ github.action_path }}/find-pod.sh ${{ inputs.release_name }})" >> $GITHUB_OUTPUT"
+      run: echo "pod-status=$(${{ github.action_path }}/find-pod.sh ${{ inputs.release_name }})" >> $GITHUB_OUTPUT
