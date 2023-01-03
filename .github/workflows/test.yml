@@ -113,7 +113,7 @@ jobs:
       POD_RELEASE_NAME: main
     steps:
       - name: Find Devcloud pod
-        uses: phase2/octane-actions/actions/detect-pod@main
+        uses: phase2/octane-actions/actions/detect-pod@develop
         id: detect-pod
         with:
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
