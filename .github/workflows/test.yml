@@ -19,6 +19,7 @@ jobs:
     outputs:
       add-pr-url: ${{ steps.filter.outputs.add-pr-url }}
       load-env: ${{ steps.filter.outputs.load-env }}
+      detect-pod: ${{ steps.filter.outputs.detect-pod }}
     steps:
       - name: Dump GitHub context
         env:
@@ -37,6 +38,9 @@ jobs:
               - '.github/workflows/test.yml'
             load-env:
               - 'actions/load-env/**'
+              - '.github/workflows/test.yml'
+            detect-pod:
+              - 'actions/detect-pod/**'
               - '.github/workflows/test.yml'
 
   test-add-pr-url:
@@ -96,3 +100,19 @@ jobs:
             fi
           fi
           exit $result
+
+  test-detect-pod:
+    name: Test detect-pod
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: ${{ needs.changes.outputs.detect-pod == 'true' }}
+    env:
+      # Check if Phase2 demo project has a pod.
+      GENERATOR_PROJECT_NAME: demo
+    steps:
+      - name: Find Devcloud pod
+        uses: phase2/octane-actions/actions/detect-pod@main
+        id: detect-pod
+        with:
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+          release_name: main
