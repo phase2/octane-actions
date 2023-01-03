@@ -107,12 +107,24 @@ jobs:
     needs: [changes]
     if: ${{ needs.changes.outputs.detect-pod == 'true' }}
     env:
-      # Check if Phase2 demo project has a pod.
+      # Check if Phase2 demo project has a pod for main branch.
       GENERATOR_PROJECT_NAME: demo
+      GENERATOR_NAMESPACE: demo
+      POD_RELEASE_NAME: main
     steps:
       - name: Find Devcloud pod
         uses: phase2/octane-actions/actions/detect-pod@main
         id: detect-pod
         with:
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
-          release_name: main
+          release_name: ${{ env.POD_RELEASE_NAME }}
+      - name: Validate pod status
+        run: |
+          result=0
+          echo "Pod status: ${{ steps.detect-pod.outputs.pod-status }}"
+          if [ "${{ steps.detect-pod.outputs.pod-status }}" != "true" ]; then
+            echo "ERROR finding pod for namespace: $GENERATOR_NAMESPACE release: $POD_RELEASE_NAME"
+            result=1
+          fi
+          exit $result
+
