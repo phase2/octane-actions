@@ -83,7 +83,7 @@ jobs:
             result=1
           fi
           echo "CI_BRANCH: $CI_BRANCH"
-          if [[ "$CI_BRANCH" != "$GITHUB_REF_NAME" ]; then
+          if [ "$CI_BRANCH" != "$GITHUB_REF_NAME" ]; then
             echo "ERROR setting CI_BRANCH"
             result=1
           fi
