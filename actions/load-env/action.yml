@@ -6,7 +6,7 @@ runs:
   steps:
     - name: Load .env variables
       if: ${{ hashFiles('.env') != '' }}
-      uses: c-py/action-dotenv-to-setenv@v4
+      uses: c-py/action-dotenv-to-setenv@v5
       with:
         env-file: .env
     - name: Update config/cache paths
