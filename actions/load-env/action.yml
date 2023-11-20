@@ -1,11 +1,10 @@
 name: "Load environment"
 description: "Load environment variables"
 
-outputs:
-  node_options: ${{ steps.source-env.outputs.node_options }}
-
 runs:
   using: "composite"
+  outputs:
+    node_options: ${{ steps.source-env.outputs.node_options }}
   steps:
     - name: Load .env variables
       id: source-env
