@@ -70,12 +70,20 @@ jobs:
       - name: Check out the repo
         uses: actions/checkout@v3
       - name: Load environment
+        id: set_env
         uses: phase2/octane-actions/actions/load-env@develop
       - name: Environment vars
         run: env
       - name: Validate results
+        env:
+          NODE_OPTIONS: ${{steps.set_env.outputs.node_options}}
         run: |
           result=0
+          echo "NODE_OPTIONS: $NODE_OPTIONS"
+          if [ "$NODE_OPTIONS" != "test" ]; then
+            echo "ERROR handling NODE_OPTIONS in .env file"
+            result=1
+          fi
           echo "PROJECT_NAME: $PROJECT_NAME"
           if [ "$PROJECT_NAME" != "octane-actions" ]; then
             echo "ERROR loading .env file"
