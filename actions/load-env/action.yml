@@ -1,13 +1,16 @@
 name: "Load environment"
 description: "Load environment variables"
 
+outputs:
+  node_options:
+    description: "NODE_OPTIONS environment variable from .env"
+    value: ${{ steps.source-env.outputs.node_options }}
+
 runs:
   using: "composite"
-  outputs:
-    node_options: ${{ steps.source-env.outputs.node_options }}
   steps:
-    - name: Load .env variables
-      id: source-env
+    - id: source-env
+      name: Load .env variables
       if: ${{ hashFiles('.env') != '' }}
       uses: c-py/action-dotenv-to-setenv@v5
       with:
