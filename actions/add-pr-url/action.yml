@@ -29,11 +29,15 @@ runs:
           let now = new Date();
           console.log(now.toUTCString());
           console.log(context.payload)
+          let url = `${{ inputs.url }}`;
+          if (! url.startsWith('http')) {
+            url = `https://${url}`;
+          }
           let caption = '${{ inputs.caption }}'
           if (! caption) {
-            caption = 'View environment ${{ inputs.url }}'
+            caption = 'View environment ${url}'
           }
-          const snippet = `<h3><a href="https://${{ inputs.url }}">:arrow_forward:&nbsp;&nbsp;${caption}</a></h3>`
+          const snippet = `<h3><a href="${url}">:arrow_forward:&nbsp;&nbsp;${caption}</a></h3>`
           const owner = context.payload.repository.owner.login
           const repo = context.payload.repository.name
           let fetch_body = '${{ inputs.fetch }}'
