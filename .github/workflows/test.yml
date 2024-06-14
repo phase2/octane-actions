@@ -54,6 +54,11 @@ jobs:
         with:
           url: www.example.com
           caption: Test Link
+      - name: Add existing https link to PR
+        uses: phase2/octane-actions/actions/add-pr-url@develop
+        with:
+          url: https://www.example.com
+          caption: Test Https Link
       - name: Add second url link to PR
         uses: phase2/octane-actions/actions/add-pr-url@develop
         with:
