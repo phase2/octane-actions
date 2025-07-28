@@ -18,7 +18,7 @@ runs:
   using: "composite"
   steps:
     - name: Setup kubectl
-      uses: azure/setup-kubectl@v3
+      uses: azure/setup-kubectl@v4
     - name: Login to k8s
       uses: azure/k8s-set-context@v3
       with:
