@@ -26,7 +26,7 @@ jobs:
           GITHUB_CONTEXT: ${{ toJSON(github) }}
         run: echo "$GITHUB_CONTEXT"
       - name: Check out the repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
       - name: Find file changes
         uses: dorny/paths-filter@v2
         id: filter
@@ -73,7 +73,7 @@ jobs:
     if: ${{ needs.changes.outputs.load-env == 'true' }}
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
       - name: Load environment
         id: set_env
         uses: phase2/octane-actions/actions/load-env@develop
