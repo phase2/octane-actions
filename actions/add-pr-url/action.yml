@@ -23,7 +23,7 @@ runs:
       id: findPr
     - name: Add environment link to pull request comment
       if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
-      uses: actions/github-script@v6
+      uses: actions/github-script@v8
       with:
         script: |
           let now = new Date();
