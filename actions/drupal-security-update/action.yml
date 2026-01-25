@@ -105,7 +105,7 @@ runs:
         claude_args: |
           --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch"
         prompt: |
-          Perform a Drupal Composer security update based on the audit results.
+          Perform a Drupal security update based on composer audit results.
 
           Read the instructions at ${{ github.action_path }}/instructions.md and follow them precisely.
 
@@ -117,11 +117,15 @@ runs:
           Working directory: ${{ inputs.working_directory }}
 
           Key requirements:
-          - Update ONLY packages with security advisories
+          - CRITICAL: Only update packages that are DIRECT dependencies (listed in composer.json require/require-dev)
+          - NEVER run composer update on transitive dependencies or composer itself
+          - Before updating any package, verify it exists in composer.json with: grep -E "\"vendor/package\"" composer.json
           - Handle patch failures by searching drupal.org issue queues
           - Run validation before completing
           - Create pr_body.md with security advisory links and any patch changes
-          - Stage all changes but DO NOT commit
+          - Document any transitive vulnerabilities that require upstream fixes
+          - Stage all changes EXCEPT pr_body.md (do NOT stage pr_body.md)
+          - DO NOT commit
 
     - name: Check for changes
       if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
@@ -141,6 +145,9 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
+        # Ensure pr_body.md is not committed (it's only used for PR description)
+        git reset HEAD pr_body.md 2>/dev/null || true
+
         git commit -m "Security update: Drupal Composer dependencies
 
         Automated security update performed by Drupal Security Updates action.

@@ -14,27 +14,44 @@ Update Drupal Composer dependencies that have security vulnerabilities.
 Run `composer audit --format=json` to identify packages with security advisories.
 
 ### 2. Filter to Direct Dependencies Only
-**Important**: Only update packages that are direct dependencies in `composer.json`.
 
-Before updating any package, check if it exists in the `require` or `require-dev` sections of `composer.json`:
-- **Direct dependency**: Listed in `composer.json` → Update it
-- **Transitive dependency**: NOT in `composer.json` (pulled in by another package) → Do NOT update directly. Instead, update the direct dependency that requires it.
-- **Composer itself**: Do NOT update composer or composer plugins unless explicitly listed as a project dependency
+**CRITICAL**: You must ONLY update packages explicitly listed in `composer.json` under `require` or `require-dev`.
 
-To identify which direct dependency pulls in a vulnerable transitive package:
+**Before updating ANY package**, run this check:
 ```bash
-composer depends vendor/vulnerable-package
+grep -E "\"vendor/package\"" composer.json
 ```
 
-Then update the top-level direct dependency instead, which will pull in the updated transitive dependency.
+If the package is NOT found in composer.json, **DO NOT run composer update on it**.
+
+#### What NOT to update (examples):
+- `composer/composer` - Never update composer itself
+- Any package pulled in by another package
+
+#### Handling Transitive Dependency Vulnerabilities
+If a vulnerable package is NOT in composer.json:
+
+1. Find what requires it:
+   ```bash
+   composer depends vendor/vulnerable-package
+   ```
+
+2. Trace up to a direct dependency (one that IS in composer.json)
+
+3. Update ONLY that direct dependency:
+   ```bash
+   composer update direct/dependency --with-dependencies
+   ```
+
+4. If the transitive vulnerability persists, document it in pr_body.md as "requires upstream fix"
 
 ### 3. Update Vulnerable Direct Dependencies
-For each **direct** dependency with an advisory:
+For each vulnerable package that IS in `composer.json`:
 ```bash
 composer update vendor/package --with-dependencies
 ```
 
-The `--with-dependencies` flag ensures transitive dependencies are updated along with the direct dependency.
+**Reminder**: Never run `composer update` on a package unless you have confirmed it exists in composer.json.
 
 ### 4. Handle Patch Failures
 When a package update causes a patch to fail:
@@ -71,10 +88,11 @@ Save to `pr_body.md` with:
 - Transitive dependency vulnerabilities that were NOT updated (list the vulnerable package and which direct dependency should be updated upstream to resolve it)
 
 ### 7. Stage Changes
-Stage all modified files:
+Stage modified files:
 - composer.json
 - composer.lock
 - Any modified patch files
-- pr_body.md
+
+DO NOT stage pr_body.md - it is a working file used only for the PR description.
 
 DO NOT commit - the workflow handles that.
