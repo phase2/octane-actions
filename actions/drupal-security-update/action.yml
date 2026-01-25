@@ -159,26 +159,41 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       env:
-        GH_TOKEN: ${{ inputs.github_token }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
       run: |
         PR_TITLE="Security: Drupal security updates - $(date +%Y-%m-%d)"
 
         if [ -f pr_body.md ]; then
-          PR_URL=$(gh pr create \
-            --title "$PR_TITLE" \
-            --body-file pr_body.md \
-            --base "${{ inputs.base_branch }}" \
-            --head "${{ steps.branch.outputs.name }}" \
-            --label "security" 2>&1 || true)
+          PR_BODY=$(cat pr_body.md)
         else
-          PR_URL=$(gh pr create \
-            --title "$PR_TITLE" \
-            --body "Automated security update for Drupal Composer dependencies.
+          PR_BODY="Automated security update for Drupal Composer dependencies.
 
-        This PR addresses ${{ steps.audit.outputs.vulnerability_count }} security vulnerabilities found by \`composer audit\`." \
-            --base "${{ inputs.base_branch }}" \
-            --head "${{ steps.branch.outputs.name }}" \
-            --label "security" 2>&1 || true)
+        This PR addresses ${{ steps.audit.outputs.vulnerability_count }} security vulnerabilities found by \`composer audit\`."
+        fi
+
+        # Escape the body for JSON
+        PR_BODY_ESCAPED=$(echo "$PR_BODY" | jq -Rs .)
+
+        # Create PR using GitHub REST API
+        RESPONSE=$(curl -s -X POST \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          "https://api.github.com/repos/${{ github.repository }}/pulls" \
+          -d @- <<EOF
+        {
+          "title": "$PR_TITLE",
+          "body": $PR_BODY_ESCAPED,
+          "head": "${{ steps.branch.outputs.name }}",
+          "base": "${{ inputs.base_branch }}"
+        }
+        EOF
+        )
+
+        PR_URL=$(echo "$RESPONSE" | jq -r '.html_url // empty')
+
+        if [ -z "$PR_URL" ]; then
+          echo "::error::Failed to create PR: $(echo "$RESPONSE" | jq -r '.message // "Unknown error"')"
+          exit 1
         fi
 
         echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
