@@ -15,29 +15,31 @@ Automatically update Drupal Composer dependencies with security vulnerabilities 
 ## Usage
 
 ```yaml
-name: Drupal Security Updates
+name: Drupal Security Update Action
 
 on:
-  schedule:
-    - cron: '0 8 * * 1'  # Every Monday at 8am
+ schedule:
+   - cron: '0 17 * * 3'  # Every Wednesday in the security update window
   workflow_dispatch:
 
 jobs:
   security-update:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    container:
+      image: ghcr.io/phase2/docker-cli:php8.3
+      options: --user 1000
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.3'
-          tools: composer:v2
-
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
       - name: Drupal Security Update
-        uses: phase2/drupal-security-update-action@v1
+        uses: phase2/octane-actions/actions/drupal-security-update@main
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
 ```
 
 ## Inputs
@@ -87,7 +89,3 @@ jobs:
    - Invokes Claude AI to perform the updates
    - Claude updates vulnerable packages and handles any patch conflicts
    - Commits changes and creates a pull request
-
-## License
-
-MIT
