@@ -1,0 +1,185 @@
+name: 'Drupal Security Update'
+description: 'Automatically update Composer dependencies with security vulnerabilities'
+author: 'Phase2'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  anthropic_api_key:
+    description: 'Anthropic API key for Claude'
+    required: true
+  github_token:
+    description: 'GitHub token for creating branches and PRs (defaults to github.token)'
+    required: false
+    default: ${{ github.token }}
+  working_directory:
+    description: 'Directory containing composer.json'
+    required: false
+    default: '.'
+  base_branch:
+    description: 'Base branch for the PR'
+    required: false
+    default: 'main'
+  dry_run:
+    description: 'If true, check for vulnerabilities but do not create PR'
+    required: false
+    default: 'false'
+
+outputs:
+  has_vulnerabilities:
+    description: 'Whether security vulnerabilities were found'
+    value: ${{ steps.audit.outputs.has_vulnerabilities }}
+  pr_url:
+    description: 'URL of the created pull request (if any)'
+    value: ${{ steps.create-pr.outputs.pr_url }}
+  vulnerabilities_found:
+    description: 'Number of vulnerabilities found'
+    value: ${{ steps.audit.outputs.vulnerability_count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if [ -f composer.lock ]; then
+          composer install --no-interaction --no-progress
+        fi
+
+    - name: Run Composer audit
+      id: audit
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        set +e
+        AUDIT_OUTPUT=$(composer audit --format=json 2>/dev/null)
+        AUDIT_EXIT_CODE=$?
+        set -e
+
+        echo "audit_json<<EOF" >> $GITHUB_OUTPUT
+        echo "$AUDIT_OUTPUT" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+        if [ $AUDIT_EXIT_CODE -ne 0 ]; then
+          VULN_COUNT=$(echo "$AUDIT_OUTPUT" | jq -r '.advisories | to_entries | map(.value | length) | add // 0')
+          echo "has_vulnerabilities=true" >> $GITHUB_OUTPUT
+          echo "vulnerability_count=$VULN_COUNT" >> $GITHUB_OUTPUT
+          echo "::warning::Found $VULN_COUNT security vulnerabilities in Composer dependencies"
+        else
+          echo "has_vulnerabilities=false" >> $GITHUB_OUTPUT
+          echo "vulnerability_count=0" >> $GITHUB_OUTPUT
+          echo "::notice::No security vulnerabilities found"
+        fi
+
+    - name: Exit if no vulnerabilities or dry run
+      if: steps.audit.outputs.has_vulnerabilities != 'true' || inputs.dry_run == 'true'
+      shell: bash
+      run: |
+        if [ "${{ steps.audit.outputs.has_vulnerabilities }}" != "true" ]; then
+          echo "No security vulnerabilities found. Exiting."
+        else
+          echo "Dry run mode - vulnerabilities found but not creating PR."
+          echo "Vulnerabilities: ${{ steps.audit.outputs.vulnerability_count }}"
+        fi
+
+    - name: Create update branch
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
+      id: branch
+      shell: bash
+      run: |
+        BRANCH_NAME="issue/autoupdate-$(date +%Y%m%d%H%M)"
+        echo "name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git checkout -b "$BRANCH_NAME"
+
+    - name: Run Claude Code for updates
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
+      uses: anthropics/claude-code-action@v1
+      with:
+        anthropic_api_key: ${{ inputs.anthropic_api_key }}
+        show_full_output: true
+        claude_args: |
+          --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch"
+        prompt: |
+          Perform a Drupal Composer security update based on the audit results.
+
+          Read the instructions at ${{ github.action_path }}/instructions.md and follow them precisely.
+
+          The composer audit found the following vulnerabilities:
+          ```json
+          ${{ steps.audit.outputs.audit_json }}
+          ```
+
+          Working directory: ${{ inputs.working_directory }}
+
+          Key requirements:
+          - Update ONLY packages with security advisories
+          - Handle patch failures by searching drupal.org issue queues
+          - Run validation before completing
+          - Create pr_body.md with security advisory links and any patch changes
+          - Stage all changes but DO NOT commit
+
+    - name: Check for changes
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
+      id: check
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if git diff --cached --quiet; then
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+          echo "::warning::Vulnerabilities found but no changes were made"
+        else
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Commit changes
+      if: steps.check.outputs.has_changes == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        git commit -m "Security update: Drupal Composer dependencies
+
+        Automated security update performed by Drupal Security Updates action.
+        Vulnerabilities addressed: ${{ steps.audit.outputs.vulnerability_count }}"
+
+    - name: Push changes
+      if: steps.check.outputs.has_changes == 'true'
+      uses: ad-m/github-push-action@master
+      with:
+        github_token: ${{ inputs.github_token }}
+        branch: ${{ steps.branch.outputs.name }}
+
+    - name: Create Pull Request
+      if: steps.check.outputs.has_changes == 'true'
+      id: create-pr
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        PR_TITLE="Security: Drupal security updates - $(date +%Y-%m-%d)"
+
+        if [ -f pr_body.md ]; then
+          PR_URL=$(gh pr create \
+            --title "$PR_TITLE" \
+            --body-file pr_body.md \
+            --base "${{ inputs.base_branch }}" \
+            --head "${{ steps.branch.outputs.name }}" \
+            --label "security" 2>&1 || true)
+        else
+          PR_URL=$(gh pr create \
+            --title "$PR_TITLE" \
+            --body "Automated security update for Drupal Composer dependencies.
+
+        This PR addresses ${{ steps.audit.outputs.vulnerability_count }} security vulnerabilities found by \`composer audit\`." \
+            --base "${{ inputs.base_branch }}" \
+            --head "${{ steps.branch.outputs.name }}" \
+            --label "security" 2>&1 || true)
+        fi
+
+        echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+        echo "::notice::Created PR: $PR_URL"
