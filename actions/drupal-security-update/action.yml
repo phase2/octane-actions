@@ -59,9 +59,9 @@ runs:
         AUDIT_EXIT_CODE=$?
         set -e
 
-        echo "audit_json<<EOF" >> $GITHUB_OUTPUT
+        echo "audit_json<<GHAAJEOF" >> $GITHUB_OUTPUT
         echo "$AUDIT_OUTPUT" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
+        echo "GHAAJEOF" >> $GITHUB_OUTPUT
 
         if [ $AUDIT_EXIT_CODE -ne 0 ]; then
           VULN_COUNT=$(echo "$AUDIT_OUTPUT" | jq -r '.advisories | to_entries | map(.value | length) | add // 0')
@@ -172,6 +172,7 @@ runs:
 
         if [ -f pr_body.md ]; then
           PR_BODY=$(cat pr_body.md)
+          rm pr_body.md
         else
           PR_BODY="Automated security update for Drupal Composer dependencies.
 
