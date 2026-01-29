@@ -48,7 +48,7 @@ jobs:
 ## Inputs
 
 | Input | Description | Required | Default |
-|-------|-------------|----------|---------|
+| --- | --- | --- | --- |
 | `anthropic_api_key` | Anthropic API key for Claude | Yes | - |
 | `github_token` | GitHub token for creating branches and PRs | No | `github.token` |
 | `working_directory` | Directory containing composer.json | No | `.` |
@@ -58,7 +58,7 @@ jobs:
 ## Outputs
 
 | Output | Description |
-|--------|-------------|
+| --- | --- | --- | --- |
 | `has_vulnerabilities` | Whether security vulnerabilities were found |
 | `pr_url` | URL of the created pull request (if any) |
 | `vulnerabilities_found` | Number of vulnerabilities found |
