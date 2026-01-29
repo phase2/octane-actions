@@ -93,6 +93,6 @@ Stage modified files:
 - composer.lock
 - Any modified patch files
 
-DO NOT stage pr_body.md - it is a working file used only for the PR description.
+**CRITICAL**: DO NOT stage pr_body.md - it is a working file used only for the PR description.
 
-DO NOT commit - the workflow handles that.
+**CRITICAL**: DO NOT commit - the workflow handles that.

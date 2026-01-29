@@ -27,6 +27,37 @@ inputs:
     required: false
     default: 'false'
 
+  # RSS Feed Checking
+  check_rss_first:
+    description: 'Check Drupal security RSS feeds and track state to detect new advisories before running'
+    required: false
+    default: 'false'
+  rss_feeds:
+    description: 'Comma-separated RSS feed URLs to check (default: core and contrib)'
+    required: false
+    default: 'https://www.drupal.org/security/rss.xml,https://www.drupal.org/security/contrib/rss.xml'
+  rss_state_variable:
+    description: 'Name of repo variable to store RSS state (requires actions:write permission)'
+    required: false
+    default: 'DRUPAL_SECURITY_RSS_STATE'
+
+  # Slack Notifications
+  slack_webhook:
+    description: 'Slack webhook URL for notifications (optional)'
+    required: false
+  slack_channel:
+    description: 'Slack channel name (without #) - required if slack_webhook is set'
+    required: false
+
+  # PR Reviewer Assignment
+  assign_admin_reviewers:
+    description: 'Assign repository admins as PR reviewers (triggers GitHub email notifications)'
+    required: false
+    default: 'false'
+  additional_reviewers:
+    description: 'Comma-separated list of additional GitHub usernames to assign as reviewers'
+    required: false
+
 outputs:
   has_vulnerabilities:
     description: 'Whether security vulnerabilities were found'
@@ -38,9 +69,189 @@ outputs:
     description: 'Number of vulnerabilities found'
     value: ${{ steps.audit.outputs.vulnerability_count }}
 
+  # RSS Check outputs
+  new_advisories_found:
+    description: 'Whether new security advisories were found in RSS feeds'
+    value: ${{ steps.rss-check.outputs.has_new_advisories }}
+  skipped_no_advisories:
+    description: 'Whether the action was skipped due to no new advisories'
+    value: ${{ steps.rss-check.outputs.skipped }}
+
+  # PR Deduplication outputs
+  pr_action:
+    description: 'Action taken for PR (create, skip, supersede)'
+    value: ${{ steps.existing-pr.outputs.action }}
+  superseded_pr:
+    description: 'PR number that was superseded (if any)'
+    value: ${{ steps.existing-pr.outputs.existing_pr }}
+
+  # Notification outputs
+  reviewers_assigned:
+    description: 'Comma-separated list of reviewers assigned to the PR'
+    value: ${{ steps.get-admins.outputs.admin_logins }}
+  slack_notification_sent:
+    description: 'Whether Slack notification was sent successfully'
+    value: ${{ steps.slack-notify.outputs.sent }}
+
 runs:
   using: 'composite'
   steps:
+    - name: Check RSS feeds with state tracking
+      id: rss-check
+      if: inputs.check_rss_first == 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        STATE_VAR: ${{ inputs.rss_state_variable }}
+      run: |
+        echo "Checking Drupal security RSS feeds for new advisories..."
+
+        # --- State tracking overview ---------------------------------------------------------
+        # We persist the set of advisory GUIDs we've already processed in a *repo Actions variable*.
+        # That variable's value is a JSON string like:
+        #   {"seen_ids":["3557473 at https://www.drupal.org", "..."]}
+        #
+        # On each run:
+        # - Fetch feeds
+        # - Extract all GUIDs
+        # - Diff against `seen_ids`
+        # - Emit outputs (including the new GUIDs)
+        # - Update the repo variable with the latest full set of GUIDs
+        # ------------------------------------------------------------------------------------
+
+        # Fetch current state from repo variable via GitHub's REST API.
+        # `${{ github.repository }}` is evaluated by GitHub Actions before the shell runs (e.g. "owner/repo").
+        CURRENT_STATE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+          "https://api.github.com/repos/${{ github.repository }}/actions/variables/$STATE_VAR" \
+          # `.value` is the variable value (a string). If missing/null, fall back to a minimal state.
+          | jq -r '.value // "{\"seen_ids\":[]}"')
+
+        # Handle case where variable doesn't exist yet
+        if [ "$CURRENT_STATE" = "null" ] || [ -z "$CURRENT_STATE" ]; then
+          CURRENT_STATE='{"seen_ids":[]}'
+        fi
+
+        # Parse the JSON state into a newline-delimited list:
+        # - `jq -r '.seen_ids[]'` prints each element on its own line.
+        # - If parsing fails (malformed JSON, etc.), treat as empty state.
+        SEEN_IDS=$(printf '%s' "$CURRENT_STATE" | jq -r '.seen_ids[]' 2>/dev/null || echo "")
+
+        # --- Fetch RSS feeds ----------------------------------------------------------------
+        # `inputs.rss_feeds` is a composite-action input (GitHub Actions expression syntax).
+        # We expect a comma-separated list of feed URLs, and we allow spaces around commas.
+        IFS=',' read -r -a FEEDS <<< "${{ inputs.rss_feeds }}"
+
+        # Helper to trim leading/trailing whitespace from a string in bash.
+        # This keeps `"https://a, https://b"` from producing `" https://b"` (note the leading space).
+        trim() {
+          local s="$1"
+          # trim leading whitespace
+          s="${s#"${s%%[![:space:]]*}"}"
+          # trim trailing whitespace
+          s="${s%"${s##*[![:space:]]}"}"
+          printf '%s' "$s"
+        }
+
+        # Accumulate all feeds into one string, then extract GUIDs from it.
+        # (This is simple to reason about; if feed sizes ever get large, a streaming approach is possible.)
+        ALL_FEED_CONTENT=""
+        for feed_url in "${FEEDS[@]}"; do
+          feed_url="$(trim "$feed_url")"
+          if [ -z "$feed_url" ]; then
+            continue
+          fi
+          echo "Fetching feed: $feed_url"
+          FEED_CONTENT=$(curl -s "$feed_url")
+          ALL_FEED_CONTENT="$ALL_FEED_CONTENT$FEED_CONTENT"
+        done
+
+        # --- Extract GUIDs ------------------------------------------------------------------
+        # Extract each RSS `<guid ...>...</guid>` value.
+        # We use a PCRE lookbehind so we capture only the inner text (not the tags/attributes).
+        # NOTE: GUIDs may contain spaces (e.g. "3557473 at https://www.drupal.org"), so we treat GUIDs as lines.
+        ALL_GUIDS=$(
+          printf '%s' "$ALL_FEED_CONTENT" \
+            | grep -oP '(?<=<guid[^>]*>)[^<]+' \
+            | sort -u
+        )
+
+        # --- Diff against state --------------------------------------------------------------
+        # Build NEW_GUIDS_LINES as a newline-delimited list of GUIDs that are NOT present in SEEN_IDS.
+        # We intentionally avoid `for guid in $ALL_GUIDS` because that would split on whitespace and corrupt GUIDs.
+        NEW_GUIDS_LINES=""
+        while IFS= read -r guid; do
+          if [ -z "$guid" ]; then
+            continue
+          fi
+
+          # Match the full GUID line exactly:
+          # - `-F` fixed-string match (not regex)
+          # - `-x` match the whole line (avoid substring collisions)
+          # - `--` protects against GUIDs beginning with '-' being treated as options
+          if ! printf '%s\n' "$SEEN_IDS" | grep -Fxq -- "$guid"; then
+            NEW_GUIDS_LINES+="${guid}"$'\n'
+          fi
+        done <<< "$ALL_GUIDS"
+
+        # Trim trailing newline for cleaner output formatting
+        NEW_GUIDS_LINES="${NEW_GUIDS_LINES%$'\n'}"
+
+        if [ -n "$NEW_GUIDS_LINES" ]; then
+          # Export step outputs for downstream steps/jobs.
+          # We use a multiline output for `new_advisory_ids` so GUIDs with spaces remain unambiguous.
+          echo "has_new_advisories=true" >> "$GITHUB_OUTPUT"
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+          {
+            echo "new_advisory_ids<<EOF"
+            printf '%s\n' "$NEW_GUIDS_LINES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          # Log a GitHub Actions notice for visibility in the run summary.
+          echo "::notice::New advisories found:"
+          printf '%s\n' "$NEW_GUIDS_LINES"
+
+          # Update state with all current GUIDs (not just the new ones).
+          # This makes the next run treat the current feed set as "seen".
+          NEW_STATE=$(printf '%s' "$ALL_GUIDS" | jq -R -s '{seen_ids: split("\n") | map(select(length > 0))}')
+
+          # Check if the repo variable exists (HTTP 200) vs not found (commonly 404).
+          # We discard the body and keep only the status code.
+          VAR_EXISTS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/variables/$STATE_VAR")
+
+          if [ "$VAR_EXISTS" = "200" ]; then
+            # Update existing variable
+            curl -s -X PATCH \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/variables/$STATE_VAR" \
+              # The variable value must be a *string*, so we JSON-encode the JSON blob:
+              # - `jq -c .` makes it compact JSON on one line
+              # - `jq -Rs .` turns that into a JSON string literal (quotes + escaping)
+              -d "{\"value\": $(echo "$NEW_STATE" | jq -c . | jq -Rs .)}"
+          else
+            # Create new variable
+            curl -s -X POST \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/variables" \
+              # Same encoding logic as above; also include `name`.
+              -d "{\"name\": \"$STATE_VAR\", \"value\": $(echo "$NEW_STATE" | jq -c . | jq -Rs .)}"
+          fi
+        else
+          # No new advisories: emit outputs so callers can exit early.
+          echo "has_new_advisories=false" >> $GITHUB_OUTPUT
+          echo "skipped=true" >> $GITHUB_OUTPUT
+          echo "::notice::No new advisories since last check"
+        fi
+
+    - name: Exit early if no new advisories
+      if: inputs.check_rss_first == 'true' && steps.rss-check.outputs.has_new_advisories != 'true'
+      shell: bash
+      run: |
+        echo "No new Drupal security advisories found. Exiting."
+        exit 0
+
     - name: Install dependencies
       shell: bash
       working-directory: ${{ inputs.working_directory }}
@@ -140,8 +351,162 @@ runs:
           echo "has_changes=true" >> $GITHUB_OUTPUT
         fi
 
-    - name: Commit changes
+    - name: Check for existing security PRs
       if: steps.check.outputs.has_changes == 'true'
+      id: existing-pr
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        set -euo pipefail
+
+        LABEL_NAME="drupal-security-update"
+        API_HEADERS=(
+          -H "Authorization: Bearer $GITHUB_TOKEN"
+          -H "Accept: application/vnd.github+json"
+          -H "X-GitHub-Api-Version: 2022-11-28"
+        )
+
+        # Find open PRs with the label on the target base branch (pagination-safe).
+        QUERY="repo:${{ github.repository }} is:pr is:open base:${{ inputs.base_branch }} label:${LABEL_NAME}"
+        ENCODED_QUERY=$(printf '%s' "$QUERY" | jq -sRr @uri)
+        SEARCH_JSON=$(curl -sS "${API_HEADERS[@]}" \
+          "https://api.github.com/search/issues?q=$ENCODED_QUERY&per_page=100") || {
+          echo "GitHub search failed; creating new PR"
+          echo "action=create" >> $GITHUB_OUTPUT
+          exit 0
+        }
+
+        TOTAL_COUNT=$(echo "$SEARCH_JSON" | jq -r '.total_count // 0')
+        if [ "$TOTAL_COUNT" = "0" ] || [ "$TOTAL_COUNT" = "null" ]; then
+          echo "No existing security PRs found with label '$LABEL_NAME'"
+          echo "action=create" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        echo "Found $TOTAL_COUNT existing security PR(s) with label '$LABEL_NAME'"
+
+        # Select the most recent candidate PR from this repo (ignore fork PRs).
+        PR_NUMBER=""
+        PR_BRANCH=""
+
+        CANDIDATE_NUMBERS=$(echo "$SEARCH_JSON" | jq -r '.items | sort_by(.created_at) | reverse | .[].number')
+        for N in $CANDIDATE_NUMBERS; do
+          PR_JSON=$(curl -sS "${API_HEADERS[@]}" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/$N" 2>/dev/null) || continue
+
+          HEAD_REPO=$(echo "$PR_JSON" | jq -r '.head.repo.full_name // empty')
+          if [ "$HEAD_REPO" != "${{ github.repository }}" ]; then
+            continue
+          fi
+
+          PR_NUMBER="$N"
+          PR_BRANCH=$(echo "$PR_JSON" | jq -r '.head.ref // empty')
+          break
+        done
+
+        if [ -z "$PR_NUMBER" ] || [ -z "$PR_BRANCH" ]; then
+          echo "No same-repo security PRs found (fork PRs are ignored)"
+          echo "action=create" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        echo "Checking PR #$PR_NUMBER on branch $PR_BRANCH"
+        echo "existing_pr=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+        # Fetch the existing PR branch and base branch (needed for diffs).
+        git fetch origin "${{ inputs.base_branch }}" "$PR_BRANCH" 2>/dev/null || {
+          echo "Could not fetch PR branch, creating new PR"
+          echo "action=create" >> $GITHUB_OUTPUT
+          exit 0
+        }
+
+        # Get list of files changed in current staged changes
+        mapfile -t CURRENT_FILES < <(git diff --cached --name-only | LC_ALL=C sort -u)
+
+        # Get list of files changed in existing PR (compared to base)
+        mapfile -t EXISTING_FILES < <(git diff --name-only "origin/${{ inputs.base_branch }}...origin/$PR_BRANCH" 2>/dev/null | LC_ALL=C sort -u || true)
+
+        echo "Current changes files: ${CURRENT_FILES[*]:-(none)}"
+        echo "Existing PR files: ${EXISTING_FILES[*]:-(none)}"
+
+        CURRENT_FILES_TEXT=$(printf '%s\n' "${CURRENT_FILES[@]}")
+        EXISTING_FILES_TEXT=$(printf '%s\n' "${EXISTING_FILES[@]}")
+
+        # Compare file lists
+        if [ "$CURRENT_FILES_TEXT" = "$EXISTING_FILES_TEXT" ]; then
+          # Same files - check if content is identical (portable hashing; avoids md5sum differences).
+          EXISTING_HASH=$(git diff "origin/${{ inputs.base_branch }}...origin/$PR_BRANCH" 2>/dev/null | openssl dgst -sha256 -r | cut -d' ' -f1)
+          CURRENT_HASH=$(git diff --cached | openssl dgst -sha256 -r | cut -d' ' -f1)
+
+          if [ "$EXISTING_HASH" = "$CURRENT_HASH" ]; then
+            echo "Changes are identical to existing PR #$PR_NUMBER"
+            echo "action=skip" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+        fi
+
+        # Check if current is a safe superset:
+        # - Includes all files from existing PR
+        # - AND overlapping file diffs match exactly (so we don't close a PR with different changes)
+        if [ "${#EXISTING_FILES[@]}" -gt 0 ]; then
+          MISSING_FROM_CURRENT=$(comm -23 <(printf '%s\n' "${EXISTING_FILES[@]}") <(printf '%s\n' "${CURRENT_FILES[@]}") | head -1 || true)
+
+          if [ -z "$MISSING_FROM_CURRENT" ]; then
+            EXISTING_OVERLAP_HASH=$(git diff "origin/${{ inputs.base_branch }}...origin/$PR_BRANCH" -- "${EXISTING_FILES[@]}" 2>/dev/null | openssl dgst -sha256 -r | cut -d' ' -f1)
+            CURRENT_OVERLAP_HASH=$(git diff --cached -- "${EXISTING_FILES[@]}" | openssl dgst -sha256 -r | cut -d' ' -f1)
+
+            if [ "$EXISTING_OVERLAP_HASH" = "$CURRENT_OVERLAP_HASH" ]; then
+              echo "Current changes safely supersede existing PR #$PR_NUMBER (overlapping diffs match)"
+              echo "action=supersede" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            echo "Current changes include existing files but differ in overlapping diffs; creating new PR"
+          fi
+        fi
+
+        # Changes are different - create new PR
+        echo "Changes differ from existing PR - creating new PR"
+        echo "action=create" >> $GITHUB_OUTPUT
+
+    - name: Handle existing PR (supersede)
+      if: steps.existing-pr.outputs.action == 'supersede'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        PR_NUMBER=${{ steps.existing-pr.outputs.existing_pr }}
+
+        echo "Superseding PR #$PR_NUMBER with newer security update"
+
+        # Add comment to existing PR
+        curl -s -X POST \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments" \
+          -d '{"body": "This PR has been superseded by a newer security update that includes additional fixes. Closing in favor of the new PR."}'
+
+        # Close existing PR
+        curl -s -X PATCH \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER" \
+          -d '{"state": "closed"}'
+
+        echo "::notice::Closed superseded PR #$PR_NUMBER"
+
+    - name: Skip if identical
+      if: steps.existing-pr.outputs.action == 'skip'
+      shell: bash
+      run: |
+        echo "::notice::Skipping PR creation - identical to existing PR #${{ steps.existing-pr.outputs.existing_pr }}"
+        echo "Existing PR: https://github.com/${{ github.repository }}/pull/${{ steps.existing-pr.outputs.existing_pr }}"
+        exit 0
+
+    - name: Commit changes
+      if: steps.check.outputs.has_changes == 'true' && steps.existing-pr.outputs.action != 'skip'
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
@@ -154,20 +519,29 @@ runs:
         Vulnerabilities addressed: ${{ steps.audit.outputs.vulnerability_count }}"
 
     - name: Push changes
-      if: steps.check.outputs.has_changes == 'true'
+      if: steps.check.outputs.has_changes == 'true' && steps.existing-pr.outputs.action != 'skip'
       uses: ad-m/github-push-action@master
       with:
         github_token: ${{ inputs.github_token }}
         branch: ${{ steps.branch.outputs.name }}
 
     - name: Create Pull Request
-      if: steps.check.outputs.has_changes == 'true'
+      if: steps.check.outputs.has_changes == 'true' && steps.existing-pr.outputs.action != 'skip'
       id: create-pr
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
       run: |
+        set -euo pipefail
+
+        LABEL_NAME="drupal-security-update"
+        API_HEADERS=(
+          -H "Authorization: Bearer $GITHUB_TOKEN"
+          -H "Accept: application/vnd.github+json"
+          -H "X-GitHub-Api-Version: 2022-11-28"
+        )
+
         PR_TITLE="Security: Drupal security updates - $(date +%Y-%m-%d)"
 
         if [ -f pr_body.md ]; then
@@ -181,10 +555,14 @@ runs:
         # Escape the body for JSON
         PR_BODY_ESCAPED=$(echo "$PR_BODY" | jq -Rs .)
 
+        # Ensure the label exists (ignore error if it already exists)
+        curl -fsSL -X POST "${API_HEADERS[@]}" \
+          "https://api.github.com/repos/${{ github.repository }}/labels" \
+          -d "{\"name\":\"$LABEL_NAME\",\"color\":\"0E8A16\",\"description\":\"Automated Drupal security update PRs\"}" \
+          >/dev/null 2>&1 || true
+
         # Create PR using GitHub REST API
-        RESPONSE=$(curl -s -X POST \
-          -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
+        RESPONSE=$(curl -sS -X POST "${API_HEADERS[@]}" \
           "https://api.github.com/repos/${{ github.repository }}/pulls" \
           -d @- <<EOF
         {
@@ -197,11 +575,149 @@ runs:
         )
 
         PR_URL=$(echo "$RESPONSE" | jq -r '.html_url // empty')
+        PR_NUMBER=$(echo "$RESPONSE" | jq -r '.number // empty')
 
         if [ -z "$PR_URL" ]; then
           echo "::error::Failed to create PR: $(echo "$RESPONSE" | jq -r '.message // "Unknown error"')"
           exit 1
         fi
 
+        # Apply label for future deduplication
+        curl -fsSL -X POST "${API_HEADERS[@]}" \
+          "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/labels" \
+          -d "{\"labels\":[\"$LABEL_NAME\"]}" \
+          >/dev/null 2>&1 || true
+
         echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+        echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
         echo "::notice::Created PR: $PR_URL"
+
+    - name: Get repository admins for review assignment
+      id: get-admins
+      if: steps.create-pr.outputs.pr_url != '' && inputs.assign_admin_reviewers == 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        # Get collaborators with admin permission
+        ADMINS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          "https://api.github.com/repos/${{ github.repository }}/collaborators?permission=admin" \
+          | jq -r '[.[] | .login] | join(",")')
+
+        # Filter out the bot user (can't request review from PR author)
+        ADMINS=$(echo "$ADMINS" | tr ',' '\n' | grep -v "github-actions\[bot\]" | grep -v "^$" | tr '\n' ',' | sed 's/,$//')
+
+        echo "admin_logins=$ADMINS" >> $GITHUB_OUTPUT
+        echo "::notice::Found admin users: $ADMINS"
+
+    - name: Assign reviewers to PR
+      if: steps.create-pr.outputs.pr_url != '' && (inputs.assign_admin_reviewers == 'true' || inputs.additional_reviewers != '')
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        # Combine admin reviewers and additional reviewers
+        REVIEWERS=""
+
+        if [ "${{ inputs.assign_admin_reviewers }}" == "true" ] && [ -n "${{ steps.get-admins.outputs.admin_logins }}" ]; then
+          REVIEWERS="${{ steps.get-admins.outputs.admin_logins }}"
+        fi
+
+        if [ -n "${{ inputs.additional_reviewers }}" ]; then
+          if [ -n "$REVIEWERS" ]; then
+            REVIEWERS="$REVIEWERS,${{ inputs.additional_reviewers }}"
+          else
+            REVIEWERS="${{ inputs.additional_reviewers }}"
+          fi
+        fi
+
+        if [ -z "$REVIEWERS" ]; then
+          echo "::warning::No reviewers to assign"
+          exit 0
+        fi
+
+        # Convert comma-separated to JSON array
+        REVIEWERS_JSON=$(echo "$REVIEWERS" | tr ',' '\n' | grep -v "^$" | jq -R . | jq -s .)
+
+        PR_NUMBER="${{ steps.create-pr.outputs.pr_number }}"
+
+        echo "Assigning reviewers to PR #$PR_NUMBER: $REVIEWERS"
+
+        # Request reviewers via GitHub API
+        RESPONSE=$(curl -s -X POST \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/requested_reviewers" \
+          -d "{\"reviewers\": $REVIEWERS_JSON}")
+
+        # Check for errors
+        if echo "$RESPONSE" | jq -e '.message' > /dev/null 2>&1; then
+          echo "::warning::Failed to assign some reviewers: $(echo "$RESPONSE" | jq -r '.message')"
+        else
+          echo "::notice::Successfully assigned reviewers to PR"
+        fi
+
+    - name: Send Slack notification
+      id: slack-notify
+      if: steps.create-pr.outputs.pr_url != '' && inputs.slack_webhook != '' && inputs.slack_channel != ''
+      shell: bash
+      env:
+        SLACK_WEBHOOK: ${{ inputs.slack_webhook }}
+      run: |
+        # Build Slack message payload
+        CHANNEL="${{ inputs.slack_channel }}"
+        PR_URL="${{ steps.create-pr.outputs.pr_url }}"
+        VULN_COUNT="${{ steps.audit.outputs.vulnerability_count }}"
+        REPO="${{ github.repository }}"
+
+        # Construct the payload
+        PAYLOAD=$(cat <<'EOFPAYLOAD'
+        {
+          "channel": "#CHANNEL_PLACEHOLDER",
+          "username": "Drupal Security Bot",
+          "icon_emoji": ":shield:",
+          "attachments": [
+            {
+              "color": "warning",
+              "title": "Drupal Security Update Required",
+              "title_link": "PR_URL_PLACEHOLDER",
+              "text": "A new security update PR has been created for *REPO_PLACEHOLDER*",
+              "fields": [
+                {
+                  "title": "Vulnerabilities Found",
+                  "value": "VULN_COUNT_PLACEHOLDER",
+                  "short": true
+                },
+                {
+                  "title": "Action Required",
+                  "value": "Review and merge PR",
+                  "short": true
+                }
+              ],
+              "footer": "Drupal Security Update Action"
+            }
+          ]
+        }
+        EOFPAYLOAD
+        )
+
+        # Replace placeholders
+        PAYLOAD=$(echo "$PAYLOAD" | sed "s|CHANNEL_PLACEHOLDER|$CHANNEL|g")
+        PAYLOAD=$(echo "$PAYLOAD" | sed "s|PR_URL_PLACEHOLDER|$PR_URL|g")
+        PAYLOAD=$(echo "$PAYLOAD" | sed "s|REPO_PLACEHOLDER|$REPO|g")
+        PAYLOAD=$(echo "$PAYLOAD" | sed "s|VULN_COUNT_PLACEHOLDER|$VULN_COUNT|g")
+
+        # Send to Slack
+        RESPONSE=$(curl -s -X POST \
+          -H "Content-Type: application/json" \
+          -d "$PAYLOAD" \
+          "$SLACK_WEBHOOK")
+
+        if [ "$RESPONSE" = "ok" ]; then
+          echo "sent=true" >> $GITHUB_OUTPUT
+          echo "::notice::Slack notification sent successfully"
+        else
+          echo "sent=false" >> $GITHUB_OUTPUT
+          echo "::warning::Slack notification may have failed: $RESPONSE"
+        fi
