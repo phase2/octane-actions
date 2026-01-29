@@ -21,7 +21,7 @@ You should not need to configure a project level key projects in the Phase2 orga
 name: Drupal Security Update Action
 
 on:
- schedule:
+  schedule:
    - cron: '0 17 * * 3'  # Every Wednesday in the security update window
   workflow_dispatch:
 
