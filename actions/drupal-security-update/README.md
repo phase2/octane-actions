@@ -14,6 +14,9 @@ Automatically update Drupal Composer dependencies with security vulnerabilities 
 
 ## Usage
 
+Note usage examples demonstrate use of Phase2 organization level secret for anthropic_api_key.
+You should not need to configure a project level key projects in the Phase2 organization.
+
 ```yaml
 name: Drupal Security Update Action
 
@@ -65,9 +68,9 @@ jobs:
 ```yaml
 - name: Check for vulnerabilities
   id: check
-  uses: phase2/drupal-security-update-action@v1
+  uses: phase2/octane-actions/actions/drupal-security-update@main
   with:
-    anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+    anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
     dry_run: 'true'
 
 - name: Report
