@@ -101,6 +101,7 @@ runs:
       uses: anthropics/claude-code-action@v1
       with:
         anthropic_api_key: ${{ inputs.anthropic_api_key }}
+        github_token: ${{ inputs.github_token }}
         show_full_output: true
         claude_args: |
           --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch"
