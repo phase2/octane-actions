@@ -17,6 +17,9 @@ Automatically update Drupal Composer dependencies with security vulnerabilities 
 
 ## Usage
 
+Note usage examples demonstrate use of Phase2 organization level secret for anthropic_api_key.
+You should not need to configure a project-level key for projects in the Phase2 organization.
+
 ### Basic Usage
 
 ```yaml

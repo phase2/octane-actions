@@ -6,7 +6,7 @@ Update Drupal Composer dependencies that have security vulnerabilities.
 ## Execution Context
 - Use `composer` command directly
 - Non-interactive execution required
-- Commit changes when complete
+- Stage changes when complete
 
 ## Process
 
