@@ -54,6 +54,8 @@ jobs:
 | `working_directory` | Directory containing composer.json | No | `.` |
 | `base_branch` | Base branch for the PR | No | `main` |
 | `dry_run` | Check for vulnerabilities without creating PR | No | `false` |
+| `branch_prefix` | Prefix for the created branch name | No | `issue/` |
+| `pr_reviewers` | Comma-separated list of GitHub usernames to request review from | No | - |
 
 ## Outputs
 
@@ -78,6 +80,21 @@ jobs:
   run: echo "Found ${{ steps.check.outputs.vulnerabilities_found }} vulnerabilities"
 ```
 
+## Example: With Custom Branch Prefix and PR Reviewers
+
+```yaml
+- name: Drupal Security Update
+  uses: phase2/octane-actions/actions/drupal-security-update@main
+  with:
+    anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
+    branch_prefix: 'security/'
+    pr_reviewers: 'octocat,hubot'
+```
+
+This example:
+- Creates branches with the prefix `security/` (e.g., `security/autoupdate-202601311200`)
+- Requests review from users `octocat` and `hubot`
+
 ## Requirements
 
 - PHP and Composer must be installed in the runner environment
@@ -88,7 +105,8 @@ jobs:
 
 1. Runs `composer audit --format=json` to check for security vulnerabilities
 2. If vulnerabilities are found:
-   - Creates a new branch (`issue/autoupdate-YYYYMMDDHHMM`)
+   - Creates a new branch (using configured prefix, e.g., `issue/autoupdate-YYYYMMDDHHMM`)
    - Invokes Claude AI to perform the updates
    - Claude updates vulnerable packages and handles any patch conflicts
    - Commits changes and creates a pull request
+   - Requests review from specified users (if configured)

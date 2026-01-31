@@ -26,6 +26,14 @@ inputs:
     description: 'If true, check for vulnerabilities but do not create PR'
     required: false
     default: 'false'
+  branch_prefix:
+    description: 'Prefix for the created branch name (e.g., "issue/" creates "issue/autoupdate-YYYYMMDDHHMM")'
+    required: false
+    default: 'issue/'
+  pr_reviewers:
+    description: 'Comma-separated list of GitHub usernames to request review from on the created PR'
+    required: false
+    default: ''
 
 outputs:
   has_vulnerabilities:
@@ -33,7 +41,7 @@ outputs:
     value: ${{ steps.audit.outputs.has_vulnerabilities }}
   pr_url:
     description: 'URL of the created pull request (if any)'
-    value: ${{ steps.create-pr.outputs.pr_url }}
+    value: ${{ steps.create-pr.outputs.pull-request-url }}
   vulnerabilities_found:
     description: 'Number of vulnerabilities found'
     value: ${{ steps.audit.outputs.vulnerability_count }}
@@ -85,17 +93,6 @@ runs:
           echo "Vulnerabilities: ${{ steps.audit.outputs.vulnerability_count }}"
         fi
 
-    - name: Create update branch
-      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
-      id: branch
-      shell: bash
-      run: |
-        BRANCH_NAME="issue/autoupdate-$(date +%Y%m%d%H%M)"
-        echo "name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git checkout -b "$BRANCH_NAME"
-
     - name: Run Claude Code for updates
       if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
       uses: anthropics/claude-code-action@v1
@@ -124,86 +121,82 @@ runs:
           - Handle patch failures by searching drupal.org issue queues
           - Run validation before completing
           - Create pr_body.md with security advisory links and any patch changes
+          - Create commit_message.txt with a concise commit message summarizing the updates
           - Document any transitive vulnerabilities that require upstream fixes
-          - Stage all changes EXCEPT pr_body.md (do NOT stage pr_body.md)
-          - DO NOT commit
+          - DO NOT stage or commit changes
 
-    - name: Check for changes
+    - name: Prepare PR metadata
       if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
-      id: check
+      id: prepare-pr
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
-        if git diff --cached --quiet; then
-          echo "has_changes=false" >> $GITHUB_OUTPUT
-          echo "::warning::Vulnerabilities found but no changes were made"
-        else
-          echo "has_changes=true" >> $GITHUB_OUTPUT
-        fi
+        # Generate branch name with prefix
+        BRANCH_NAME="${{ inputs.branch_prefix }}autoupdate-$(date +%Y%m%d%H%M)"
+        echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
 
-    - name: Commit changes
-      if: steps.check.outputs.has_changes == 'true'
-      shell: bash
-      working-directory: ${{ inputs.working_directory }}
-      run: |
-        # Ensure pr_body.md is not committed (it's only used for PR description)
-        git reset HEAD pr_body.md 2>/dev/null || true
-
-        git commit -m "Security update: Drupal Composer dependencies
-
-        Automated security update performed by Drupal Security Updates action.
-        Vulnerabilities addressed: ${{ steps.audit.outputs.vulnerability_count }}"
-
-    - name: Push changes
-      if: steps.check.outputs.has_changes == 'true'
-      uses: ad-m/github-push-action@master
-      with:
-        github_token: ${{ inputs.github_token }}
-        branch: ${{ steps.branch.outputs.name }}
-
-    - name: Create Pull Request
-      if: steps.check.outputs.has_changes == 'true'
-      id: create-pr
-      shell: bash
-      working-directory: ${{ inputs.working_directory }}
-      env:
-        GITHUB_TOKEN: ${{ inputs.github_token }}
-      run: |
+        # Generate PR title with date
         PR_TITLE="Security: Drupal security updates - $(date +%Y-%m-%d)"
+        echo "pr_title=$PR_TITLE" >> $GITHUB_OUTPUT
 
+        # Read PR body from Claude's output (if exists) then remove it so it's not committed
         if [ -f pr_body.md ]; then
-          PR_BODY=$(cat pr_body.md)
+          {
+            echo "pr_body<<GHPREOF"
+            cat pr_body.md
+            echo "GHPREOF"
+          } >> $GITHUB_OUTPUT
           rm pr_body.md
         else
-          PR_BODY="Automated security update for Drupal Composer dependencies.
-
-        This PR addresses ${{ steps.audit.outputs.vulnerability_count }} security vulnerabilities found by \`composer audit\`."
+          {
+            echo "pr_body<<GHPREOF"
+            echo "Automated security update for Drupal Composer dependencies."
+            echo ""
+            echo "This PR addresses ${{ steps.audit.outputs.vulnerability_count }} security vulnerabilities found by \`composer audit\`."
+            echo "GHPREOF"
+          } >> $GITHUB_OUTPUT
         fi
 
-        # Escape the body for JSON
-        PR_BODY_ESCAPED=$(echo "$PR_BODY" | jq -Rs .)
-
-        # Create PR using GitHub REST API
-        RESPONSE=$(curl -s -X POST \
-          -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/${{ github.repository }}/pulls" \
-          -d @- <<EOF
-        {
-          "title": "$PR_TITLE",
-          "body": $PR_BODY_ESCAPED,
-          "head": "${{ steps.branch.outputs.name }}",
-          "base": "${{ inputs.base_branch }}"
-        }
-        EOF
-        )
-
-        PR_URL=$(echo "$RESPONSE" | jq -r '.html_url // empty')
-
-        if [ -z "$PR_URL" ]; then
-          echo "::error::Failed to create PR: $(echo "$RESPONSE" | jq -r '.message // "Unknown error"')"
-          exit 1
+        # Read commit message from Claude's output (if exists) then remove it so it's not committed
+        if [ -f commit_message.txt ]; then
+          {
+            echo "commit_message<<GHCMEOF"
+            cat commit_message.txt
+            echo "GHCMEOF"
+          } >> $GITHUB_OUTPUT
+          rm commit_message.txt
+        else
+          {
+            echo "commit_message<<GHCMEOF"
+            echo "Security update: Drupal Composer dependencies"
+            echo ""
+            echo "Automated security update performed by Drupal Security Updates action."
+            echo "Vulnerabilities addressed: ${{ steps.audit.outputs.vulnerability_count }}"
+            echo "GHCMEOF"
+          } >> $GITHUB_OUTPUT
         fi
 
-        echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
-        echo "::notice::Created PR: $PR_URL"
+    - name: Create Pull Request
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
+      id: create-pr
+      uses: peter-evans/create-pull-request@v7
+      with:
+        token: ${{ inputs.github_token }}
+        branch: ${{ steps.prepare-pr.outputs.branch_name }}
+        base: ${{ inputs.base_branch }}
+        title: ${{ steps.prepare-pr.outputs.pr_title }}
+        body: ${{ steps.prepare-pr.outputs.pr_body }}
+        commit-message: ${{ steps.prepare-pr.outputs.commit_message }}
+        reviewers: ${{ inputs.pr_reviewers }}
+        committer: drupal-security-update[bot] <drupal-security-update@users.noreply.github.com>
+        author: drupal-security-update[bot] <drupal-security-update@users.noreply.github.com>
+
+    - name: Report PR status
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
+      shell: bash
+      run: |
+        if [ -n "${{ steps.create-pr.outputs.pull-request-url }}" ]; then
+          echo "::notice::Created PR: ${{ steps.create-pr.outputs.pull-request-url }}"
+        else
+          echo "::warning::Vulnerabilities found but no changes were made (packages may already be at latest versions)"
+        fi
