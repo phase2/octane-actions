@@ -89,14 +89,14 @@ Save to `pr_body.md` with:
 
 ### 7. Create Commit Message
 Save to `commit_message.txt` with a concise commit message following this format:
-```
+```text
 Security update: <brief summary of packages updated>
 
 <details about what was updated, one line per package>
 ```
 
 Example:
-```
+```text
 Security update: drupal/core, drupal/contrib_module
 
 - drupal/core: 10.2.0 -> 10.2.1 (SA-CORE-2024-001)
