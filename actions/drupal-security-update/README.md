@@ -60,7 +60,7 @@ jobs:
 ## Outputs
 
 | Output | Description |
-| --- | --- | --- | --- |
+| --- | --- |
 | `has_vulnerabilities` | Whether security vulnerabilities were found |
 | `pr_url` | URL of the created pull request (if any) |
 | `vulnerabilities_found` | Number of vulnerabilities found |
@@ -98,6 +98,7 @@ This example:
 ## Requirements
 
 - PHP and Composer must be installed in the runner environment
+- `jq` must be installed in the runner environment (used to parse audit output)
 - The repository must have a `composer.json` file
 - GitHub token must have permissions to create branches and pull requests
 
