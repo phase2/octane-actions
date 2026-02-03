@@ -49,22 +49,19 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
 ```
 
-### With Additional Reviewers
+### With PR Reviewers and Slack Notifications
 
 ```yaml
 - name: Drupal Security Update
   uses: phase2/octane-actions/actions/drupal-security-update@main
   with:
     anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
-    assign_admin_reviewers: 'true'
-    additional_reviewers: 'lead-dev,security-team-lead'
+    pr_reviewers: 'lead-dev,security-team-lead'
     slack_webhook: ${{ secrets.SLACK_WEBHOOK }}
     slack_channel: 'security-alerts'
 ```
 
 ## Inputs
-
-### Core Inputs
 
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
@@ -75,38 +72,18 @@ jobs:
 | `dry_run` | Check for vulnerabilities without creating PR | No | `false` |
 | `branch_prefix` | Prefix for the created branch name | No | `issue/` |
 | `pr_reviewers` | Comma-separated list of GitHub usernames to request review from | No | - |
-
-### Notification Inputs
-
-| Input | Description | Required | Default |
-|-------|-------------|----------|---------|
 | `slack_webhook` | Slack webhook URL for notifications | No | - |
 | `slack_channel` | Slack channel name (without #) | No | - |
-| `assign_admin_reviewers` | Assign repository admins as PR reviewers | No | `false` |
-| `additional_reviewers` | Comma-separated list of GitHub usernames | No | - |
 
 ## Outputs
-
-### Core Outputs
 
 | Output | Description |
 |--------|-------------|
 | `has_vulnerabilities` | Whether security vulnerabilities were found |
 | `pr_url` | URL of the created pull request (if any) |
 | `vulnerabilities_found` | Number of vulnerabilities found |
-
-### PR Deduplication Outputs
-
-| Output | Description |
-|--------|-------------|
 | `pr_action` | Action taken for PR (create, skip, supersede) |
 | `superseded_pr` | PR number that was superseded (if any) |
-
-### Notification Outputs
-
-| Output | Description |
-|--------|-------------|
-| `reviewers_assigned` | Comma-separated list of reviewers assigned to the PR |
 | `slack_notification_sent` | Whether Slack notification was sent successfully |
 
 ## Example: Dry Run Check

@@ -43,15 +43,6 @@ inputs:
     description: 'Slack channel name (without #) - required if slack_webhook is set'
     required: false
 
-  # PR Reviewer Assignment
-  assign_admin_reviewers:
-    description: 'Assign repository admins as PR reviewers (triggers GitHub email notifications)'
-    required: false
-    default: 'false'
-  additional_reviewers:
-    description: 'Comma-separated list of additional GitHub usernames to assign as reviewers'
-    required: false
-
 outputs:
   has_vulnerabilities:
     description: 'Whether security vulnerabilities were found'
@@ -71,10 +62,7 @@ outputs:
     description: 'PR number that was superseded (if any)'
     value: ${{ steps.existing-pr.outputs.existing_pr }}
 
-  # Notification outputs
-  reviewers_assigned:
-    description: 'Comma-separated list of reviewers assigned to the PR'
-    value: ${{ steps.get-admins.outputs.admin_logins }}
+  # Slack notification output
   slack_notification_sent:
     description: 'Whether Slack notification was sent successfully'
     value: ${{ steps.slack-notify.outputs.sent }}
