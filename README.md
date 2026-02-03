@@ -160,6 +160,8 @@ errors when checking out code.
 * `working_directory`: Directory containing composer.json. Defaults to `.`
 * `base_branch`: Base branch for the PR. Defaults to `main`
 * `dry_run`: Check for vulnerabilities without creating PR. Defaults to `false`
+* `branch_prefix`: Prefix for the created branch name. Defaults to `issue/`
+* `pr_reviewers`: Comma-separated list of GitHub usernames to request review from
 
 > Outputs:
 * `has_vulnerabilities`: Whether security vulnerabilities were found
@@ -171,7 +173,8 @@ Runs `composer audit` to detect vulnerabilities, then uses Claude to intelligent
 only direct dependencies listed in `composer.json`, handle patch conflicts by searching
 drupal.org issue queues, and create a PR with a detailed description of changes.
 
-See [action README](actions/drupal-security-update/README.md) for an example.
+See [action README](actions/drupal-security-update/README.md) for an example and
+required tools expected in runner environment.
 
 ---
 

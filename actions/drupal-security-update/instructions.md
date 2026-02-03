@@ -6,7 +6,7 @@ Update Drupal Composer dependencies that have security vulnerabilities.
 ## Execution Context
 - Use `composer` command directly
 - Non-interactive execution required
-- Stage changes when complete
+- DO NOT stage or commit changes - the workflow handles that
 
 ## Process
 
@@ -87,12 +87,24 @@ Save to `pr_body.md` with:
 - Conflicts requiring manual resolution (if any)
 - Transitive dependency vulnerabilities that were NOT updated (list the vulnerable package and which direct dependency should be updated upstream to resolve it)
 
-### 7. Stage Changes
-Stage modified files:
-- composer.json
-- composer.lock
-- Any modified patch files
+### 7. Create Commit Message
+Save to `commit_message.txt` with a concise commit message following this format:
+```text
+Security update: <brief summary of packages updated>
 
-**CRITICAL**: DO NOT stage pr_body.md - it is a working file used only for the PR description.
+<details about what was updated, one line per package>
+```
 
-**CRITICAL**: DO NOT commit - the workflow handles that.
+Example:
+```text
+Security update: drupal/core, drupal/contrib_module
+
+- drupal/core: 10.2.0 -> 10.2.1 (SA-CORE-2024-001)
+- drupal/contrib_module: 2.0.0 -> 2.0.1 (SA-CONTRIB-2024-001)
+- Updated patch for issue #12345
+```
+
+### 8. Complete
+**CRITICAL**: DO NOT stage or commit changes - the workflow handles that automatically.
+
+**CRITICAL**: DO NOT delete pr_body.md or commit_message.txt - they are read by the workflow.

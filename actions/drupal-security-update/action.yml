@@ -26,6 +26,14 @@ inputs:
     description: 'If true, check for vulnerabilities but do not create PR'
     required: false
     default: 'false'
+  branch_prefix:
+    description: 'Prefix for the created branch name (e.g., "issue/" creates "issue/autoupdate-YYYYMMDDHHMM")'
+    required: false
+    default: 'issue/'
+  pr_reviewers:
+    description: 'Comma-separated list of GitHub usernames to request review from on the created PR'
+    required: false
+    default: ''
 
   # RSS Feed Checking
   check_rss_first:
@@ -64,7 +72,7 @@ outputs:
     value: ${{ steps.audit.outputs.has_vulnerabilities }}
   pr_url:
     description: 'URL of the created pull request (if any)'
-    value: ${{ steps.create-pr.outputs.pr_url }}
+    value: ${{ steps.create-pr.outputs.pull-request-url }}
   vulnerabilities_found:
     description: 'Number of vulnerabilities found'
     value: ${{ steps.audit.outputs.vulnerability_count }}
@@ -296,17 +304,6 @@ runs:
           echo "Vulnerabilities: ${{ steps.audit.outputs.vulnerability_count }}"
         fi
 
-    - name: Create update branch
-      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
-      id: branch
-      shell: bash
-      run: |
-        BRANCH_NAME="issue/autoupdate-$(date +%Y%m%d%H%M)"
-        echo "name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git checkout -b "$BRANCH_NAME"
-
     - name: Run Claude Code for updates
       if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
       uses: anthropics/claude-code-action@v1
@@ -335,22 +332,19 @@ runs:
           - Handle patch failures by searching drupal.org issue queues
           - Run validation before completing
           - Create pr_body.md with security advisory links and any patch changes
+          - Create commit_message.txt with a concise commit message summarizing the updates
           - Document any transitive vulnerabilities that require upstream fixes
-          - Stage all changes EXCEPT pr_body.md (do NOT stage pr_body.md)
-          - DO NOT commit
+          - DO NOT stage or commit changes
 
-    - name: Check for changes
+    - name: Prepare PR metadata
       if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
-      id: check
+      id: prepare-pr
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
-        if git diff --cached --quiet; then
-          echo "has_changes=false" >> $GITHUB_OUTPUT
-          echo "::warning::Vulnerabilities found but no changes were made"
-        else
-          echo "has_changes=true" >> $GITHUB_OUTPUT
-        fi
+        # Generate branch name with prefix
+        BRANCH_NAME="${{ inputs.branch_prefix }}autoupdate-$(date +%Y%m%d%H%M)"
+        echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
 
     - name: Check for existing security PRs
       if: steps.check.outputs.has_changes == 'true'
@@ -543,133 +537,72 @@ runs:
           -H "X-GitHub-Api-Version: 2022-11-28"
         )
 
+        # Generate PR title with date
         PR_TITLE="Security: Drupal security updates - $(date +%Y-%m-%d)"
+        echo "pr_title=$PR_TITLE" >> $GITHUB_OUTPUT
 
+        # Read PR body from Claude's output (if exists) then remove it so it's not committed
         if [ -f pr_body.md ]; then
-          PR_BODY=$(cat pr_body.md)
+          {
+            echo "pr_body<<GHPREOF"
+            cat pr_body.md
+            echo "GHPREOF"
+          } >> $GITHUB_OUTPUT
           rm pr_body.md
         else
-          PR_BODY="Automated security update for Drupal Composer dependencies.
-
-        This PR addresses ${{ steps.audit.outputs.vulnerability_count }} security vulnerabilities found by \`composer audit\`."
+          {
+            echo "pr_body<<GHPREOF"
+            echo "Automated security update for Drupal Composer dependencies."
+            echo ""
+            echo "This PR addresses ${{ steps.audit.outputs.vulnerability_count }} security vulnerabilities found by \`composer audit\`."
+            echo "GHPREOF"
+          } >> $GITHUB_OUTPUT
         fi
 
-        # Escape the body for JSON
-        PR_BODY_ESCAPED=$(echo "$PR_BODY" | jq -Rs .)
-
-        # Ensure the label exists (ignore error if it already exists)
-        curl -fsSL -X POST "${API_HEADERS[@]}" \
-          "https://api.github.com/repos/${{ github.repository }}/labels" \
-          -d "{\"name\":\"$LABEL_NAME\",\"color\":\"0E8A16\",\"description\":\"Automated Drupal security update PRs\"}" \
-          >/dev/null 2>&1 || true
-
-        # Create PR using GitHub REST API
-        RESPONSE=$(curl -sS -X POST "${API_HEADERS[@]}" \
-          "https://api.github.com/repos/${{ github.repository }}/pulls" \
-          -d @- <<EOF
-        {
-          "title": "$PR_TITLE",
-          "body": $PR_BODY_ESCAPED,
-          "head": "${{ steps.branch.outputs.name }}",
-          "base": "${{ inputs.base_branch }}"
-        }
-        EOF
-        )
-
-        PR_URL=$(echo "$RESPONSE" | jq -r '.html_url // empty')
-        PR_NUMBER=$(echo "$RESPONSE" | jq -r '.number // empty')
-
-        if [ -z "$PR_URL" ]; then
-          echo "::error::Failed to create PR: $(echo "$RESPONSE" | jq -r '.message // "Unknown error"')"
-          exit 1
-        fi
-
-        # Apply label for future deduplication
-        curl -fsSL -X POST "${API_HEADERS[@]}" \
-          "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/labels" \
-          -d "{\"labels\":[\"$LABEL_NAME\"]}" \
-          >/dev/null 2>&1 || true
-
-        echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
-        echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-        echo "::notice::Created PR: $PR_URL"
-
-    - name: Get repository admins for review assignment
-      id: get-admins
-      if: steps.create-pr.outputs.pr_url != '' && inputs.assign_admin_reviewers == 'true'
-      shell: bash
-      env:
-        GITHUB_TOKEN: ${{ inputs.github_token }}
-      run: |
-        # Get collaborators with admin permission
-        ADMINS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/${{ github.repository }}/collaborators?permission=admin" \
-          | jq -r '[.[] | .login] | join(",")')
-
-        # Filter out the bot user (can't request review from PR author)
-        ADMINS=$(echo "$ADMINS" | tr ',' '\n' | grep -v "github-actions\[bot\]" | grep -v "^$" | tr '\n' ',' | sed 's/,$//')
-
-        echo "admin_logins=$ADMINS" >> $GITHUB_OUTPUT
-        echo "::notice::Found admin users: $ADMINS"
-
-    - name: Assign reviewers to PR
-      if: steps.create-pr.outputs.pr_url != '' && (inputs.assign_admin_reviewers == 'true' || inputs.additional_reviewers != '')
-      shell: bash
-      env:
-        GITHUB_TOKEN: ${{ inputs.github_token }}
-      run: |
-        # Combine admin reviewers and additional reviewers
-        REVIEWERS=""
-
-        if [ "${{ inputs.assign_admin_reviewers }}" == "true" ] && [ -n "${{ steps.get-admins.outputs.admin_logins }}" ]; then
-          REVIEWERS="${{ steps.get-admins.outputs.admin_logins }}"
-        fi
-
-        if [ -n "${{ inputs.additional_reviewers }}" ]; then
-          if [ -n "$REVIEWERS" ]; then
-            REVIEWERS="$REVIEWERS,${{ inputs.additional_reviewers }}"
-          else
-            REVIEWERS="${{ inputs.additional_reviewers }}"
-          fi
-        fi
-
-        if [ -z "$REVIEWERS" ]; then
-          echo "::warning::No reviewers to assign"
-          exit 0
-        fi
-
-        # Convert comma-separated to JSON array
-        REVIEWERS_JSON=$(echo "$REVIEWERS" | tr ',' '\n' | grep -v "^$" | jq -R . | jq -s .)
-
-        PR_NUMBER="${{ steps.create-pr.outputs.pr_number }}"
-
-        echo "Assigning reviewers to PR #$PR_NUMBER: $REVIEWERS"
-
-        # Request reviewers via GitHub API
-        RESPONSE=$(curl -s -X POST \
-          -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/requested_reviewers" \
-          -d "{\"reviewers\": $REVIEWERS_JSON}")
-
-        # Check for errors
-        if echo "$RESPONSE" | jq -e '.message' > /dev/null 2>&1; then
-          echo "::warning::Failed to assign some reviewers: $(echo "$RESPONSE" | jq -r '.message')"
+        # Read commit message from Claude's output (if exists) then remove it so it's not committed
+        if [ -f commit_message.txt ]; then
+          {
+            echo "commit_message<<GHCMEOF"
+            cat commit_message.txt
+            echo "GHCMEOF"
+          } >> $GITHUB_OUTPUT
+          rm commit_message.txt
         else
-          echo "::notice::Successfully assigned reviewers to PR"
+          {
+            echo "commit_message<<GHCMEOF"
+            echo "Security update: Drupal Composer dependencies"
+            echo ""
+            echo "Automated security update performed by Drupal Security Updates action."
+            echo "Vulnerabilities addressed: ${{ steps.audit.outputs.vulnerability_count }}"
+            echo "GHCMEOF"
+          } >> $GITHUB_OUTPUT
         fi
+
+    - name: Create Pull Request
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
+      id: create-pr
+      uses: peter-evans/create-pull-request@v7
+      with:
+        token: ${{ inputs.github_token }}
+        branch: ${{ steps.prepare-pr.outputs.branch_name }}
+        base: ${{ inputs.base_branch }}
+        title: ${{ steps.prepare-pr.outputs.pr_title }}
+        body: ${{ steps.prepare-pr.outputs.pr_body }}
+        commit-message: ${{ steps.prepare-pr.outputs.commit_message }}
+        reviewers: ${{ inputs.pr_reviewers }}
+        committer: drupal-security-update[bot] <drupal-security-update@users.noreply.github.com>
+        author: drupal-security-update[bot] <drupal-security-update@users.noreply.github.com>
 
     - name: Send Slack notification
       id: slack-notify
-      if: steps.create-pr.outputs.pr_url != '' && inputs.slack_webhook != '' && inputs.slack_channel != ''
+      if: steps.create-pr.outputs.pull-request-url != '' && inputs.slack_webhook != '' && inputs.slack_channel != ''
       shell: bash
       env:
         SLACK_WEBHOOK: ${{ inputs.slack_webhook }}
       run: |
         # Build Slack message payload
         CHANNEL="${{ inputs.slack_channel }}"
-        PR_URL="${{ steps.create-pr.outputs.pr_url }}"
+        PR_URL="${{ steps.create-pr.outputs.pull-request-url }}"
         VULN_COUNT="${{ steps.audit.outputs.vulnerability_count }}"
         REPO="${{ github.repository }}"
 
@@ -722,4 +655,14 @@ runs:
         else
           echo "sent=false" >> $GITHUB_OUTPUT
           echo "::warning::Slack notification may have failed: $RESPONSE"
+        fi
+
+    - name: Report PR status
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
+      shell: bash
+      run: |
+        if [ -n "${{ steps.create-pr.outputs.pull-request-url }}" ]; then
+          echo "::notice::Created PR: ${{ steps.create-pr.outputs.pull-request-url }}"
+        else
+          echo "::warning::Vulnerabilities found but no changes were made (packages may already be at latest versions)"
         fi

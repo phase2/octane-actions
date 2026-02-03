@@ -112,6 +112,8 @@ jobs:
 | `working_directory` | Directory containing composer.json | No | `.` |
 | `base_branch` | Base branch for the PR | No | `main` |
 | `dry_run` | Check for vulnerabilities without creating PR | No | `false` |
+| `branch_prefix` | Prefix for the created branch name | No | `issue/` |
+| `pr_reviewers` | Comma-separated list of GitHub usernames to request review from | No | - |
 
 ### RSS Feed Checking Inputs
 
@@ -176,9 +178,25 @@ jobs:
   run: echo "Found ${{ steps.check.outputs.vulnerabilities_found }} vulnerabilities"
 ```
 
+## Example: With Custom Branch Prefix and PR Reviewers
+
+```yaml
+- name: Drupal Security Update
+  uses: phase2/octane-actions/actions/drupal-security-update@main
+  with:
+    anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
+    branch_prefix: 'security/'
+    pr_reviewers: 'octocat,hubot'
+```
+
+This example:
+- Creates branches with the prefix `security/` (e.g., `security/autoupdate-202601311200`)
+- Requests review from users `octocat` and `hubot`
+
 ## Requirements
 
 - PHP and Composer must be installed in the runner environment
+- `jq` must be installed in the runner environment (used to parse audit output)
 - The repository must have a `composer.json` file
 - GitHub token must have permissions to create branches and pull requests
 
@@ -196,24 +214,13 @@ permissions:
 
 ## How It Works
 
-1. **RSS Check (optional)**: If `check_rss_first` is enabled, checks Drupal security RSS feeds for new advisories. Uses a GitHub repository variable to track previously seen advisory IDs, ensuring the action only runs when new advisories are published.
-
-2. **Vulnerability Detection**: Runs `composer audit --format=json` to check for security vulnerabilities.
-
-3. **AI-Powered Updates**: If vulnerabilities are found:
-   - Creates a new branch (`issue/autoupdate-YYYYMMDDHHMM`)
+1. Runs `composer audit --format=json` to check for security vulnerabilities
+2. If vulnerabilities are found:
+   - Creates a new branch (using configured prefix, e.g., `issue/autoupdate-YYYYMMDDHHMM`)
    - Invokes Claude AI to perform the updates
    - Claude updates vulnerable packages and handles any patch conflicts
-
-4. **PR Deduplication**: Before creating a PR, checks for existing security update PRs:
-   - Identifies candidates by the `drupal-security-update` label (fork PRs are ignored)
-   - **Skip**: If an identical PR already exists
-   - **Supersede (safe)**: If the new PR includes all the files from an existing PR **and** the diffs for those overlapping files are identical (then closes the old PR with a comment)
-   - **Create**: If the changes are different from existing PRs
-
-5. **Notifications**: After creating a PR:
-   - Assigns repository admins and/or specified reviewers (triggers GitHub email notifications)
-   - Sends a Slack notification to the configured channel
+   - Commits changes and creates a pull request
+   - Requests review from specified users (if configured)
 
 ## Drupal Security Release Schedule
 
@@ -221,5 +228,3 @@ Drupal security advisories are released on a predictable schedule:
 - **Drupal Core**: Third Wednesday of each month
 - **Contributed Projects**: Every Wednesday
 - **Time Window**: 16:00-22:00 UTC (12:00-18:00 Eastern)
-
-For near real-time response, use the RSS checking feature with frequent polling during the Wednesday security window.
