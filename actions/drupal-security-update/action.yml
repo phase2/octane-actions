@@ -146,18 +146,8 @@ runs:
           - Document any transitive vulnerabilities that require upstream fixes
           - DO NOT stage or commit changes
 
-    - name: Prepare PR metadata
-      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
-      id: prepare-pr
-      shell: bash
-      working-directory: ${{ inputs.working_directory }}
-      run: |
-        # Generate branch name with prefix
-        BRANCH_NAME="${{ inputs.branch_prefix }}autoupdate-$(date +%Y%m%d%H%M)"
-        echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-
     - name: Check for existing security PRs
-      if: steps.check.outputs.has_changes == 'true'
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
       id: existing-pr
       shell: bash
       working-directory: ${{ inputs.working_directory }}
@@ -310,42 +300,15 @@ runs:
         echo "Existing PR: https://github.com/${{ github.repository }}/pull/${{ steps.existing-pr.outputs.existing_pr }}"
         exit 0
 
-    - name: Commit changes
-      if: steps.check.outputs.has_changes == 'true' && steps.existing-pr.outputs.action != 'skip'
+    - name: Prepare PR metadata
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
+      id: prepare-pr
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
-        # Ensure pr_body.md is not committed (it's only used for PR description)
-        git reset HEAD pr_body.md 2>/dev/null || true
-
-        git commit -m "Security update: Drupal Composer dependencies
-
-        Automated security update performed by Drupal Security Updates action.
-        Vulnerabilities addressed: ${{ steps.audit.outputs.vulnerability_count }}"
-
-    - name: Push changes
-      if: steps.check.outputs.has_changes == 'true' && steps.existing-pr.outputs.action != 'skip'
-      uses: ad-m/github-push-action@master
-      with:
-        github_token: ${{ inputs.github_token }}
-        branch: ${{ steps.branch.outputs.name }}
-
-    - name: Create Pull Request
-      if: steps.check.outputs.has_changes == 'true' && steps.existing-pr.outputs.action != 'skip'
-      id: create-pr
-      shell: bash
-      working-directory: ${{ inputs.working_directory }}
-      env:
-        GITHUB_TOKEN: ${{ inputs.github_token }}
-      run: |
-        set -euo pipefail
-
-        LABEL_NAME="drupal-security-update"
-        API_HEADERS=(
-          -H "Authorization: Bearer $GITHUB_TOKEN"
-          -H "Accept: application/vnd.github+json"
-          -H "X-GitHub-Api-Version: 2022-11-28"
-        )
+        # Generate branch name with prefix
+        BRANCH_NAME="${{ inputs.branch_prefix }}autoupdate-$(date +%Y%m%d%H%M)"
+        echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
 
         # Generate PR title with date
         PR_TITLE="Security: Drupal security updates - $(date +%Y-%m-%d)"
