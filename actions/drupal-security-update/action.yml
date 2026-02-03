@@ -34,6 +34,14 @@ inputs:
     description: 'Comma-separated list of GitHub usernames to request review from on the created PR'
     required: false
     default: ''
+  slack_bot_token:
+    description: 'Slack bot OAuth token for posting notifications (requires slack_channel_id)'
+    required: false
+    default: ''
+  slack_channel_id:
+    description: 'Slack channel ID to post notification when PR is created (requires slack_bot_token)'
+    required: false
+    default: ''
 
 outputs:
   has_vulnerabilities:
@@ -200,3 +208,38 @@ runs:
         else
           echo "::warning::Vulnerabilities found but no changes were made (packages may already be at latest versions)"
         fi
+
+    - name: Post Slack notification
+      if: steps.create-pr.outputs.pull-request-url != '' && inputs.slack_channel_id != ''
+      uses: slackapi/slack-github-action@v2
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack_bot_token }}
+        errors: true
+        payload: |
+          channel: ${{ inputs.slack_channel_id }}
+          text: "Drupal Security Update Required"
+          blocks:
+            - type: header
+              text:
+                type: plain_text
+                text: ":shield: Drupal Security Update Required"
+            - type: section
+              text:
+                type: mrkdwn
+                text: "A new pull request has been created to address security vulnerabilities."
+            - type: section
+              fields:
+                - type: mrkdwn
+                  text: "*Repository:*\n${{ github.repository }}"
+                - type: mrkdwn
+                  text: "*Vulnerabilities Found:*\n${{ steps.audit.outputs.vulnerability_count }}"
+            - type: section
+              text:
+                type: mrkdwn
+                text: "*Pull Request:* <${{ steps.create-pr.outputs.pull-request-url }}|View PR>"
+            - type: divider
+            - type: context
+              elements:
+                - type: mrkdwn
+                  text: "Please review and merge this PR as soon as possible."
