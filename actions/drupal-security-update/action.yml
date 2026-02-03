@@ -35,20 +35,6 @@ inputs:
     required: false
     default: ''
 
-  # RSS Feed Checking
-  check_rss_first:
-    description: 'Check Drupal security RSS feeds and track state to detect new advisories before running'
-    required: false
-    default: 'false'
-  rss_feeds:
-    description: 'Comma-separated RSS feed URLs to check (default: core and contrib)'
-    required: false
-    default: 'https://www.drupal.org/security/rss.xml,https://www.drupal.org/security/contrib/rss.xml'
-  rss_state_variable:
-    description: 'Name of repo variable to store RSS state (requires actions:write permission)'
-    required: false
-    default: 'DRUPAL_SECURITY_RSS_STATE'
-
   # Slack Notifications
   slack_webhook:
     description: 'Slack webhook URL for notifications (optional)'
@@ -77,14 +63,6 @@ outputs:
     description: 'Number of vulnerabilities found'
     value: ${{ steps.audit.outputs.vulnerability_count }}
 
-  # RSS Check outputs
-  new_advisories_found:
-    description: 'Whether new security advisories were found in RSS feeds'
-    value: ${{ steps.rss-check.outputs.has_new_advisories }}
-  skipped_no_advisories:
-    description: 'Whether the action was skipped due to no new advisories'
-    value: ${{ steps.rss-check.outputs.skipped }}
-
   # PR Deduplication outputs
   pr_action:
     description: 'Action taken for PR (create, skip, supersede)'
@@ -104,162 +82,6 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Check RSS feeds with state tracking
-      id: rss-check
-      if: inputs.check_rss_first == 'true'
-      shell: bash
-      env:
-        GITHUB_TOKEN: ${{ inputs.github_token }}
-        STATE_VAR: ${{ inputs.rss_state_variable }}
-      run: |
-        echo "Checking Drupal security RSS feeds for new advisories..."
-
-        # --- State tracking overview ---------------------------------------------------------
-        # We persist the set of advisory GUIDs we've already processed in a *repo Actions variable*.
-        # That variable's value is a JSON string like:
-        #   {"seen_ids":["3557473 at https://www.drupal.org", "..."]}
-        #
-        # On each run:
-        # - Fetch feeds
-        # - Extract all GUIDs
-        # - Diff against `seen_ids`
-        # - Emit outputs (including the new GUIDs)
-        # - Update the repo variable with the latest full set of GUIDs
-        # ------------------------------------------------------------------------------------
-
-        # Fetch current state from repo variable via GitHub's REST API.
-        # `${{ github.repository }}` is evaluated by GitHub Actions before the shell runs (e.g. "owner/repo").
-        CURRENT_STATE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          "https://api.github.com/repos/${{ github.repository }}/actions/variables/$STATE_VAR" \
-          # `.value` is the variable value (a string). If missing/null, fall back to a minimal state.
-          | jq -r '.value // "{\"seen_ids\":[]}"')
-
-        # Handle case where variable doesn't exist yet
-        if [ "$CURRENT_STATE" = "null" ] || [ -z "$CURRENT_STATE" ]; then
-          CURRENT_STATE='{"seen_ids":[]}'
-        fi
-
-        # Parse the JSON state into a newline-delimited list:
-        # - `jq -r '.seen_ids[]'` prints each element on its own line.
-        # - If parsing fails (malformed JSON, etc.), treat as empty state.
-        SEEN_IDS=$(printf '%s' "$CURRENT_STATE" | jq -r '.seen_ids[]' 2>/dev/null || echo "")
-
-        # --- Fetch RSS feeds ----------------------------------------------------------------
-        # `inputs.rss_feeds` is a composite-action input (GitHub Actions expression syntax).
-        # We expect a comma-separated list of feed URLs, and we allow spaces around commas.
-        IFS=',' read -r -a FEEDS <<< "${{ inputs.rss_feeds }}"
-
-        # Helper to trim leading/trailing whitespace from a string in bash.
-        # This keeps `"https://a, https://b"` from producing `" https://b"` (note the leading space).
-        trim() {
-          local s="$1"
-          # trim leading whitespace
-          s="${s#"${s%%[![:space:]]*}"}"
-          # trim trailing whitespace
-          s="${s%"${s##*[![:space:]]}"}"
-          printf '%s' "$s"
-        }
-
-        # Accumulate all feeds into one string, then extract GUIDs from it.
-        # (This is simple to reason about; if feed sizes ever get large, a streaming approach is possible.)
-        ALL_FEED_CONTENT=""
-        for feed_url in "${FEEDS[@]}"; do
-          feed_url="$(trim "$feed_url")"
-          if [ -z "$feed_url" ]; then
-            continue
-          fi
-          echo "Fetching feed: $feed_url"
-          FEED_CONTENT=$(curl -s "$feed_url")
-          ALL_FEED_CONTENT="$ALL_FEED_CONTENT$FEED_CONTENT"
-        done
-
-        # --- Extract GUIDs ------------------------------------------------------------------
-        # Extract each RSS `<guid ...>...</guid>` value.
-        # We use a PCRE lookbehind so we capture only the inner text (not the tags/attributes).
-        # NOTE: GUIDs may contain spaces (e.g. "3557473 at https://www.drupal.org"), so we treat GUIDs as lines.
-        ALL_GUIDS=$(
-          printf '%s' "$ALL_FEED_CONTENT" \
-            | grep -oP '(?<=<guid[^>]*>)[^<]+' \
-            | sort -u
-        )
-
-        # --- Diff against state --------------------------------------------------------------
-        # Build NEW_GUIDS_LINES as a newline-delimited list of GUIDs that are NOT present in SEEN_IDS.
-        # We intentionally avoid `for guid in $ALL_GUIDS` because that would split on whitespace and corrupt GUIDs.
-        NEW_GUIDS_LINES=""
-        while IFS= read -r guid; do
-          if [ -z "$guid" ]; then
-            continue
-          fi
-
-          # Match the full GUID line exactly:
-          # - `-F` fixed-string match (not regex)
-          # - `-x` match the whole line (avoid substring collisions)
-          # - `--` protects against GUIDs beginning with '-' being treated as options
-          if ! printf '%s\n' "$SEEN_IDS" | grep -Fxq -- "$guid"; then
-            NEW_GUIDS_LINES+="${guid}"$'\n'
-          fi
-        done <<< "$ALL_GUIDS"
-
-        # Trim trailing newline for cleaner output formatting
-        NEW_GUIDS_LINES="${NEW_GUIDS_LINES%$'\n'}"
-
-        if [ -n "$NEW_GUIDS_LINES" ]; then
-          # Export step outputs for downstream steps/jobs.
-          # We use a multiline output for `new_advisory_ids` so GUIDs with spaces remain unambiguous.
-          echo "has_new_advisories=true" >> "$GITHUB_OUTPUT"
-          echo "skipped=false" >> "$GITHUB_OUTPUT"
-          {
-            echo "new_advisory_ids<<EOF"
-            printf '%s\n' "$NEW_GUIDS_LINES"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-          # Log a GitHub Actions notice for visibility in the run summary.
-          echo "::notice::New advisories found:"
-          printf '%s\n' "$NEW_GUIDS_LINES"
-
-          # Update state with all current GUIDs (not just the new ones).
-          # This makes the next run treat the current feed set as "seen".
-          NEW_STATE=$(printf '%s' "$ALL_GUIDS" | jq -R -s '{seen_ids: split("\n") | map(select(length > 0))}')
-
-          # Check if the repo variable exists (HTTP 200) vs not found (commonly 404).
-          # We discard the body and keep only the status code.
-          VAR_EXISTS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/variables/$STATE_VAR")
-
-          if [ "$VAR_EXISTS" = "200" ]; then
-            # Update existing variable
-            curl -s -X PATCH \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/variables/$STATE_VAR" \
-              # The variable value must be a *string*, so we JSON-encode the JSON blob:
-              # - `jq -c .` makes it compact JSON on one line
-              # - `jq -Rs .` turns that into a JSON string literal (quotes + escaping)
-              -d "{\"value\": $(echo "$NEW_STATE" | jq -c . | jq -Rs .)}"
-          else
-            # Create new variable
-            curl -s -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/variables" \
-              # Same encoding logic as above; also include `name`.
-              -d "{\"name\": \"$STATE_VAR\", \"value\": $(echo "$NEW_STATE" | jq -c . | jq -Rs .)}"
-          fi
-        else
-          # No new advisories: emit outputs so callers can exit early.
-          echo "has_new_advisories=false" >> $GITHUB_OUTPUT
-          echo "skipped=true" >> $GITHUB_OUTPUT
-          echo "::notice::No new advisories since last check"
-        fi
-
-    - name: Exit early if no new advisories
-      if: inputs.check_rss_first == 'true' && steps.rss-check.outputs.has_new_advisories != 'true'
-      shell: bash
-      run: |
-        echo "No new Drupal security advisories found. Exiting."
-        exit 0
-
     - name: Install dependencies
       shell: bash
       working-directory: ${{ inputs.working_directory }}

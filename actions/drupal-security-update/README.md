@@ -11,7 +11,6 @@ Automatically update Drupal Composer dependencies with security vulnerabilities 
   - Resolving patch conflicts by searching drupal.org issue queues
   - Rerolling local patches when needed
 - Creates a PR with detailed description of changes
-- **RSS Feed Monitoring**: Optionally check Drupal security RSS feeds for new advisories before running
 - **PR Deduplication**: Automatically detects and handles existing security PRs via the `drupal-security-update` label (skip identical, supersede safely)
 - **Notifications**: Assign PR reviewers and send Slack notifications when PRs are created
 
@@ -50,44 +49,6 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
 ```
 
-### With RSS Feed Checking and Notifications
-
-This example uses frequent polling during the Drupal security release window (Wednesdays 16:00-22:00 UTC) with stateful RSS monitoring to detect new advisories:
-
-```yaml
-name: Drupal Security Update Action
-
-on:
-  schedule:
-    # Every 15 minutes during Wednesday security window (16:00-22:00 UTC)
-    - cron: '*/15 16-21 * * 3'
-  workflow_dispatch:
-
-jobs:
-  security-update:
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/phase2/docker-cli:php8.3
-      options: --user 1000
-    permissions:
-      contents: write
-      pull-requests: write
-      actions: write  # Required for RSS state variable
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: false
-      - name: Drupal Security Update
-        uses: phase2/octane-actions/actions/drupal-security-update@main
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
-          check_rss_first: 'true'
-          assign_admin_reviewers: 'true'
-          slack_webhook: ${{ secrets.SLACK_WEBHOOK }}
-          slack_channel: 'drupal-security'
-```
-
 ### With Additional Reviewers
 
 ```yaml
@@ -115,14 +76,6 @@ jobs:
 | `branch_prefix` | Prefix for the created branch name | No | `issue/` |
 | `pr_reviewers` | Comma-separated list of GitHub usernames to request review from | No | - |
 
-### RSS Feed Checking Inputs
-
-| Input | Description | Required | Default |
-|-------|-------------|----------|---------|
-| `check_rss_first` | Check Drupal security RSS feeds before running | No | `false` |
-| `rss_feeds` | Comma-separated RSS feed URLs to check | No | Core and contrib feeds |
-| `rss_state_variable` | Name of repo variable to store RSS state | No | `DRUPAL_SECURITY_RSS_STATE` |
-
 ### Notification Inputs
 
 | Input | Description | Required | Default |
@@ -141,13 +94,6 @@ jobs:
 | `has_vulnerabilities` | Whether security vulnerabilities were found |
 | `pr_url` | URL of the created pull request (if any) |
 | `vulnerabilities_found` | Number of vulnerabilities found |
-
-### RSS Check Outputs
-
-| Output | Description |
-|--------|-------------|
-| `new_advisories_found` | Whether new security advisories were found in RSS feeds |
-| `skipped_no_advisories` | Whether the action was skipped due to no new advisories |
 
 ### PR Deduplication Outputs
 
@@ -209,7 +155,6 @@ permissions:
   contents: write       # For creating branches and commits
   pull-requests: write  # For creating PRs and assigning reviewers
   issues: write         # For applying/creating labels (PRs are issues)
-  actions: write        # Only if using RSS state tracking (check_rss_first: 'true')
 ```
 
 ## How It Works
