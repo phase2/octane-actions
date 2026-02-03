@@ -301,7 +301,7 @@ runs:
         exit 0
 
     - name: Prepare PR metadata
-      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true' && steps.existing-pr.outputs.action != 'skip'
       id: prepare-pr
       shell: bash
       working-directory: ${{ inputs.working_directory }}
@@ -352,7 +352,7 @@ runs:
         fi
 
     - name: Create Pull Request
-      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true' && steps.existing-pr.outputs.action != 'skip'
       id: create-pr
       uses: peter-evans/create-pull-request@v7
       with:
