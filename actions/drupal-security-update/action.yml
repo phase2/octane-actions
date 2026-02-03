@@ -380,6 +380,7 @@ runs:
         errors: ${{ inputs.slack_errors }}
         payload: |
           channel: ${{ inputs.slack_channel }}
+          text: "Drupal Security Update: ${{ steps.audit.outputs.vulnerability_count }} vulnerabilities found in ${{ github.repository }}. Review PR: ${{ steps.create-pr.outputs.pull-request-url }}"
           blocks:
             - type: header
               text:
