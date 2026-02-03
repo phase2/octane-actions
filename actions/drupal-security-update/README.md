@@ -61,6 +61,20 @@ jobs:
     slack_channel: 'security-alerts'
 ```
 
+> **Note:** The Slack bot associated with your OAuth token must be invited to the target channel before notifications can be sent. You can invite the bot by typing `/invite` followed by your bot name (e.g., `/invite @Drupal Security Updates`) in the channel.
+
+To fail the workflow if the Slack notification fails (e.g., bot not invited, invalid channel), set `slack_errors: 'true'`:
+
+```yaml
+- name: Drupal Security Update
+  uses: phase2/octane-actions/actions/drupal-security-update@main
+  with:
+    anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
+    slack_oauth_token: ${{ secrets.SLACK_BOT_TOKEN }}
+    slack_channel: 'security-alerts'
+    slack_errors: 'true'
+```
+
 ## Inputs
 
 | Input | Description | Required | Default |
@@ -74,6 +88,7 @@ jobs:
 | `pr_reviewers` | Comma-separated list of GitHub usernames to request review from | No | - |
 | `slack_oauth_token` | Slack App OAuth Token for notifications | No | - |
 | `slack_channel` | Slack channel name (without #) | No | - |
+| `slack_errors` | Fail workflow if Slack notification fails | No | `false` |
 
 ## Outputs
 
