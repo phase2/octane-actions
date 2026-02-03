@@ -57,7 +57,7 @@ jobs:
   with:
     anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
     pr_reviewers: 'lead-dev,security-team-lead'
-    slack_webhook: ${{ secrets.SLACK_WEBHOOK }}
+    slack_oauth_token: ${{ secrets.SLACK_BOT_TOKEN }}
     slack_channel: 'security-alerts'
 ```
 
@@ -72,7 +72,7 @@ jobs:
 | `dry_run` | Check for vulnerabilities without creating PR | No | `false` |
 | `branch_prefix` | Prefix for the created branch name | No | `issue/` |
 | `pr_reviewers` | Comma-separated list of GitHub usernames to request review from | No | - |
-| `slack_webhook` | Slack webhook URL for notifications | No | - |
+| `slack_oauth_token` | Slack App OAuth Token for notifications | No | - |
 | `slack_channel` | Slack channel name (without #) | No | - |
 
 ## Outputs

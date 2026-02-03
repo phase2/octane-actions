@@ -36,11 +36,11 @@ inputs:
     default: ''
 
   # Slack Notifications
-  slack_webhook:
-    description: 'Slack webhook URL for notifications (optional)'
+  slack_oauth_token:
+    description: 'Slack OAuth Token for notifications (optional)'
     required: false
   slack_channel:
-    description: 'Slack channel name (without #) - required if slack_webhook is set'
+    description: 'Slack channel name (without #) - required if slack_oauth_token is set'
     required: false
 
 outputs:
@@ -368,67 +368,37 @@ runs:
 
     - name: Send Slack notification
       id: slack-notify
-      if: steps.create-pr.outputs.pull-request-url != '' && inputs.slack_webhook != '' && inputs.slack_channel != ''
-      shell: bash
-      env:
-        SLACK_WEBHOOK: ${{ inputs.slack_webhook }}
-      run: |
-        # Build Slack message payload
-        CHANNEL="${{ inputs.slack_channel }}"
-        PR_URL="${{ steps.create-pr.outputs.pull-request-url }}"
-        VULN_COUNT="${{ steps.audit.outputs.vulnerability_count }}"
-        REPO="${{ github.repository }}"
-
-        # Construct the payload
-        PAYLOAD=$(cat <<'EOFPAYLOAD'
-        {
-          "channel": "#CHANNEL_PLACEHOLDER",
-          "username": "Drupal Security Bot",
-          "icon_emoji": ":shield:",
-          "attachments": [
-            {
-              "color": "warning",
-              "title": "Drupal Security Update Required",
-              "title_link": "PR_URL_PLACEHOLDER",
-              "text": "A new security update PR has been created for *REPO_PLACEHOLDER*",
-              "fields": [
-                {
-                  "title": "Vulnerabilities Found",
-                  "value": "VULN_COUNT_PLACEHOLDER",
-                  "short": true
-                },
-                {
-                  "title": "Action Required",
-                  "value": "Review and merge PR",
-                  "short": true
-                }
-              ],
-              "footer": "Drupal Security Update Action"
-            }
-          ]
-        }
-        EOFPAYLOAD
-        )
-
-        # Replace placeholders
-        PAYLOAD=$(echo "$PAYLOAD" | sed "s|CHANNEL_PLACEHOLDER|$CHANNEL|g")
-        PAYLOAD=$(echo "$PAYLOAD" | sed "s|PR_URL_PLACEHOLDER|$PR_URL|g")
-        PAYLOAD=$(echo "$PAYLOAD" | sed "s|REPO_PLACEHOLDER|$REPO|g")
-        PAYLOAD=$(echo "$PAYLOAD" | sed "s|VULN_COUNT_PLACEHOLDER|$VULN_COUNT|g")
-
-        # Send to Slack
-        RESPONSE=$(curl -s -X POST \
-          -H "Content-Type: application/json" \
-          -d "$PAYLOAD" \
-          "$SLACK_WEBHOOK")
-
-        if [ "$RESPONSE" = "ok" ]; then
-          echo "sent=true" >> $GITHUB_OUTPUT
-          echo "::notice::Slack notification sent successfully"
-        else
-          echo "sent=false" >> $GITHUB_OUTPUT
-          echo "::warning::Slack notification may have failed: $RESPONSE"
-        fi
+      if: steps.create-pr.outputs.pull-request-url != '' && inputs.slack_oauth_token != '' && inputs.slack_channel != ''
+      uses: slackapi/slack-github-action@v2
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack_oauth_token }}
+        payload: |
+          channel: ${{ inputs.slack_channel }}
+          blocks:
+            - type: header
+              text:
+                type: plain_text
+                text: "🛡️ Drupal Security Update Required"
+                emoji: true
+            - type: section
+              text:
+                type: mrkdwn
+                text: "A new security update PR has been created for *${{ github.repository }}* on branch *${{ steps.prepare-pr.outputs.branch_name }}*."
+            - type: section
+              fields:
+                - type: mrkdwn
+                  text: "*Repository:*\n${{ github.repository }}"
+                - type: mrkdwn
+                  text: "*Vulnerabilities Found:*\n${{ steps.audit.outputs.vulnerability_count }}"
+            - type: section
+              text:
+                type: mrkdwn
+                text: "*Action Required:*\n<${{ steps.create-pr.outputs.pull-request-url }}|Review and merge PR>"
+            - type: context
+              elements:
+                - type: mrkdwn
+                  text: "Drupal Security Update Action"
 
     - name: Report PR status
       if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
