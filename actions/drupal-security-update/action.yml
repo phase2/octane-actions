@@ -158,7 +158,7 @@ runs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: pr.number,
-              body: 'This PR has been superseded by a newer security update that includes additional fixes. Closing in favor of the new PR.'
+              body: 'This PR has been superseded by a newer security update. Closing in favor of the new PR.'
             });
 
             await github.rest.pulls.update({
