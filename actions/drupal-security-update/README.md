@@ -11,7 +11,7 @@ Automatically update Drupal Composer dependencies with security vulnerabilities 
   - Resolving patch conflicts by searching drupal.org issue queues
   - Rerolling local patches when needed
 - Creates a PR with detailed description of changes
-- **PR Deduplication**: Automatically detects and handles existing security PRs via the `drupal-security-update` label (skip identical, supersede safely)
+- **PR Deduplication**: Automatically detects and closes existing security PRs via the `drupal-security-update` label before creating new ones
 - **Notifications**: Assign PR reviewers and send Slack notifications when PRs are created
 
 ## Usage
@@ -97,8 +97,8 @@ To fail the workflow if the Slack notification fails (e.g., bot not invited, inv
 | `has_vulnerabilities` | Whether security vulnerabilities were found |
 | `pr_url` | URL of the created pull request (if any) |
 | `vulnerabilities_found` | Number of vulnerabilities found |
-| `pr_action` | Action taken for PR (create, skip, supersede) |
-| `superseded_pr` | PR number that was superseded (if any) |
+| `pr_action` | Action taken for PR (create, supersede) |
+| `superseded_pr` | PR number(s) that were superseded (comma-separated if multiple) |
 | `slack_notification_sent` | Whether Slack notification was sent successfully |
 
 ## Example: Dry Run Check

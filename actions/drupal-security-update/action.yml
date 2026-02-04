@@ -60,11 +60,11 @@ outputs:
 
   # PR Deduplication outputs
   pr_action:
-    description: 'Action taken for PR (create, skip, supersede)'
+    description: 'Action taken for PR (create, supersede)'
     value: ${{ steps.existing-pr.outputs.action }}
   superseded_pr:
-    description: 'PR number that was superseded (if any)'
-    value: ${{ steps.existing-pr.outputs.existing_pr }}
+    description: 'PR number(s) that were superseded (comma-separated if multiple)'
+    value: ${{ steps.existing-pr.outputs.superseded_prs }}
 
   # Slack notification output
   slack_notification_sent:
@@ -118,162 +118,65 @@ runs:
           echo "Vulnerabilities: ${{ steps.audit.outputs.vulnerability_count }}"
         fi
 
-    - name: Check for existing security PRs
+    - name: Close existing security PRs
       if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
       id: existing-pr
-      shell: bash
-      working-directory: ${{ inputs.working_directory }}
-      env:
-        GITHUB_TOKEN: ${{ inputs.github_token }}
-      run: |
-        set -euo pipefail
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          // Find open PRs with the security label on the target base branch
+          // Note: context.repo.owner is the repository owner (org/user), not PR author
+          // It's a required parameter to identify which repository to query
+          const { data: prs } = await github.rest.pulls.list({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            base: '${{ inputs.base_branch }}'
+          });
 
-        LABEL_NAME="drupal-security-update"
-        API_HEADERS=(
-          -H "Authorization: Bearer $GITHUB_TOKEN"
-          -H "Accept: application/vnd.github+json"
-          -H "X-GitHub-Api-Version: 2022-11-28"
-        )
+          const securityPRs = prs.filter(pr =>
+            pr.labels.some(l => l.name === 'drupal-security-update')
+          );
 
-        # Find open PRs with the label on the target base branch (pagination-safe).
-        QUERY="repo:${{ github.repository }} is:pr is:open base:${{ inputs.base_branch }} label:${LABEL_NAME}"
-        ENCODED_QUERY=$(printf '%s' "$QUERY" | jq -sRr @uri)
-        SEARCH_JSON=$(curl -sS "${API_HEADERS[@]}" \
-          "https://api.github.com/search/issues?q=$ENCODED_QUERY&per_page=100") || {
-          echo "GitHub search failed; creating new PR"
-          echo "action=create" >> $GITHUB_OUTPUT
-          exit 0
-        }
+          if (securityPRs.length === 0) {
+            core.info('No existing security PRs found');
+            core.setOutput('action', 'create');
+            return;
+          }
 
-        TOTAL_COUNT=$(echo "$SEARCH_JSON" | jq -r '.total_count // 0')
-        if [ "$TOTAL_COUNT" = "0" ] || [ "$TOTAL_COUNT" = "null" ]; then
-          echo "No existing security PRs found with label '$LABEL_NAME'"
-          echo "action=create" >> $GITHUB_OUTPUT
-          exit 0
-        fi
+          // Close each existing security PR with a comment
+          const closedPRs = [];
+          for (const pr of securityPRs) {
+            // Skip PRs from forks (same as original behavior)
+            if (pr.head.repo?.full_name !== '${{ github.repository }}') {
+              core.info(`Skipping fork PR #${pr.number}`);
+              continue;
+            }
 
-        echo "Found $TOTAL_COUNT existing security PR(s) with label '$LABEL_NAME'"
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: 'This PR has been superseded by a newer security update that includes additional fixes. Closing in favor of the new PR.'
+            });
 
-        # Select the most recent candidate PR from this repo (ignore fork PRs).
-        PR_NUMBER=""
-        PR_BRANCH=""
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              state: 'closed'
+            });
 
-        CANDIDATE_NUMBERS=$(echo "$SEARCH_JSON" | jq -r '.items | sort_by(.created_at) | reverse | .[].number')
-        for N in $CANDIDATE_NUMBERS; do
-          PR_JSON=$(curl -sS "${API_HEADERS[@]}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/$N" 2>/dev/null) || continue
+            core.notice(`Closed superseded PR #${pr.number}`);
+            closedPRs.push(pr.number);
+          }
 
-          HEAD_REPO=$(echo "$PR_JSON" | jq -r '.head.repo.full_name // empty')
-          if [ "$HEAD_REPO" != "${{ github.repository }}" ]; then
-            continue
-          fi
-
-          PR_NUMBER="$N"
-          PR_BRANCH=$(echo "$PR_JSON" | jq -r '.head.ref // empty')
-          break
-        done
-
-        if [ -z "$PR_NUMBER" ] || [ -z "$PR_BRANCH" ]; then
-          echo "No same-repo security PRs found (fork PRs are ignored)"
-          echo "action=create" >> $GITHUB_OUTPUT
-          exit 0
-        fi
-
-        echo "Checking PR #$PR_NUMBER on branch $PR_BRANCH"
-        echo "existing_pr=$PR_NUMBER" >> $GITHUB_OUTPUT
-
-        # Fetch the existing PR branch and base branch (needed for diffs).
-        git fetch origin "${{ inputs.base_branch }}" "$PR_BRANCH" 2>/dev/null || {
-          echo "Could not fetch PR branch, creating new PR"
-          echo "action=create" >> $GITHUB_OUTPUT
-          exit 0
-        }
-
-        # Get list of files changed in current staged changes
-        mapfile -t CURRENT_FILES < <(git diff --cached --name-only | LC_ALL=C sort -u)
-
-        # Get list of files changed in existing PR (compared to base)
-        mapfile -t EXISTING_FILES < <(git diff --name-only "origin/${{ inputs.base_branch }}...origin/$PR_BRANCH" 2>/dev/null | LC_ALL=C sort -u || true)
-
-        echo "Current changes files: ${CURRENT_FILES[*]:-(none)}"
-        echo "Existing PR files: ${EXISTING_FILES[*]:-(none)}"
-
-        CURRENT_FILES_TEXT=$(printf '%s\n' "${CURRENT_FILES[@]}")
-        EXISTING_FILES_TEXT=$(printf '%s\n' "${EXISTING_FILES[@]}")
-
-        # Compare file lists
-        if [ "$CURRENT_FILES_TEXT" = "$EXISTING_FILES_TEXT" ]; then
-          # Same files - check if content is identical (portable hashing; avoids md5sum differences).
-          EXISTING_HASH=$(git diff "origin/${{ inputs.base_branch }}...origin/$PR_BRANCH" 2>/dev/null | openssl dgst -sha256 -r | cut -d' ' -f1)
-          CURRENT_HASH=$(git diff --cached | openssl dgst -sha256 -r | cut -d' ' -f1)
-
-          if [ "$EXISTING_HASH" = "$CURRENT_HASH" ]; then
-            echo "Changes are identical to existing PR #$PR_NUMBER"
-            echo "action=skip" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-        fi
-
-        # Check if current is a safe superset:
-        # - Includes all files from existing PR
-        # - AND overlapping file diffs match exactly (so we don't close a PR with different changes)
-        if [ "${#EXISTING_FILES[@]}" -gt 0 ]; then
-          MISSING_FROM_CURRENT=$(comm -23 <(printf '%s\n' "${EXISTING_FILES[@]}") <(printf '%s\n' "${CURRENT_FILES[@]}") | head -1 || true)
-
-          if [ -z "$MISSING_FROM_CURRENT" ]; then
-            EXISTING_OVERLAP_HASH=$(git diff "origin/${{ inputs.base_branch }}...origin/$PR_BRANCH" -- "${EXISTING_FILES[@]}" 2>/dev/null | openssl dgst -sha256 -r | cut -d' ' -f1)
-            CURRENT_OVERLAP_HASH=$(git diff --cached -- "${EXISTING_FILES[@]}" | openssl dgst -sha256 -r | cut -d' ' -f1)
-
-            if [ "$EXISTING_OVERLAP_HASH" = "$CURRENT_OVERLAP_HASH" ]; then
-              echo "Current changes safely supersede existing PR #$PR_NUMBER (overlapping diffs match)"
-              echo "action=supersede" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-
-            echo "Current changes include existing files but differ in overlapping diffs; creating new PR"
-          fi
-        fi
-
-        # Changes are different - create new PR
-        echo "Changes differ from existing PR - creating new PR"
-        echo "action=create" >> $GITHUB_OUTPUT
-
-    - name: Handle existing PR (supersede)
-      if: steps.existing-pr.outputs.action == 'supersede'
-      shell: bash
-      env:
-        GITHUB_TOKEN: ${{ inputs.github_token }}
-      run: |
-        PR_NUMBER=${{ steps.existing-pr.outputs.existing_pr }}
-
-        echo "Superseding PR #$PR_NUMBER with newer security update"
-
-        # Add comment to existing PR
-        curl -s -X POST \
-          -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments" \
-          -d '{"body": "This PR has been superseded by a newer security update that includes additional fixes. Closing in favor of the new PR."}'
-
-        # Close existing PR
-        curl -s -X PATCH \
-          -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER" \
-          -d '{"state": "closed"}'
-
-        echo "::notice::Closed superseded PR #$PR_NUMBER"
-
-    - name: Skip if identical
-      if: steps.existing-pr.outputs.action == 'skip'
-      shell: bash
-      run: |
-        echo "::notice::Skipping PR creation - identical to existing PR #${{ steps.existing-pr.outputs.existing_pr }}"
-        echo "Existing PR: https://github.com/${{ github.repository }}/pull/${{ steps.existing-pr.outputs.existing_pr }}"
-        exit 0
+          core.setOutput('action', 'supersede');
+          core.setOutput('superseded_prs', closedPRs.join(','));
 
     - name: Run Claude Code for updates
-      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true' && steps.existing-pr.outputs.action != 'skip'
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
       uses: anthropics/claude-code-action@v1
       with:
         anthropic_api_key: ${{ inputs.anthropic_api_key }}
@@ -305,7 +208,7 @@ runs:
           - DO NOT stage or commit changes
 
     - name: Prepare PR metadata
-      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true' && steps.existing-pr.outputs.action != 'skip'
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
       id: prepare-pr
       shell: bash
       working-directory: ${{ inputs.working_directory }}
@@ -356,7 +259,7 @@ runs:
         fi
 
     - name: Create Pull Request
-      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true' && steps.existing-pr.outputs.action != 'skip'
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
       id: create-pr
       uses: peter-evans/create-pull-request@v7
       with:
@@ -367,6 +270,7 @@ runs:
         body: ${{ steps.prepare-pr.outputs.pr_body }}
         commit-message: ${{ steps.prepare-pr.outputs.commit_message }}
         reviewers: ${{ inputs.pr_reviewers }}
+        labels: drupal-security-update
         committer: drupal-security-update[bot] <drupal-security-update@users.noreply.github.com>
         author: drupal-security-update[bot] <drupal-security-update@users.noreply.github.com>
 
