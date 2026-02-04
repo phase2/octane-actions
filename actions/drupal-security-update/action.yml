@@ -168,7 +168,14 @@ runs:
               state: 'closed'
             });
 
-            core.notice(`Closed superseded PR #${pr.number}`);
+            // Delete the branch associated with the closed PR
+            await github.rest.git.deleteRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${pr.head.ref}`
+            });
+
+            core.notice(`Closed superseded PR #${pr.number} and deleted branch ${pr.head.ref}`);
             closedPRs.push(pr.number);
           }
 
