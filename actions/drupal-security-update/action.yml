@@ -390,17 +390,13 @@ runs:
             - type: section
               text:
                 type: mrkdwn
-                text: "A new security update PR has been created for *${{ github.repository }}* on branch *${{ steps.prepare-pr.outputs.branch_name }}*."
+                text: "A new security update PR has been created for *${{ github.repository }}*."
             - type: section
               fields:
                 - type: mrkdwn
-                  text: "*Repository:*\n${{ github.repository }}"
+                  text: "*Action Required:*\n<${{ steps.create-pr.outputs.pull-request-url }}|Review and merge PR>"
                 - type: mrkdwn
                   text: "*Vulnerabilities Found:*\n${{ steps.audit.outputs.vulnerability_count }}"
-            - type: section
-              text:
-                type: mrkdwn
-                text: "*Action Required:*\n<${{ steps.create-pr.outputs.pull-request-url }}|Review and merge PR>"
             - type: context
               elements:
                 - type: mrkdwn
