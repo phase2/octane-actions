@@ -210,12 +210,11 @@ runs:
         fi
 
     - name: Post Slack notification
-      if: steps.create-pr.outputs.pull-request-url != '' && inputs.slack_channel_id != ''
+      if: steps.create-pr.outputs.pull-request-url != '' && inputs.slack_channel_id != '' && inputs.slack_bot_token != ''
       uses: slackapi/slack-github-action@v2
       with:
         method: chat.postMessage
         token: ${{ inputs.slack_bot_token }}
-        errors: true
         payload: |
           channel: ${{ inputs.slack_channel_id }}
           text: "Drupal Security Update Required"
