@@ -140,14 +140,45 @@ where `DEST_PATH` is the subfolder/path you want to remove for the given project
 **NOTE:** *Can only be called from with a private Phase2 repository.*
 
 ## reset-workspace-owner
-> Usage: 
+> Usage:
 * `phase2/octane-actions/actions/reset-workspace-owner@main`
-> Inputs: 
+> Inputs:
 * `user_id`: optional user ID to set file ownership.  Defaults to 1000.
 
 This action is used to clean up file ownership in the Github runner workspace and home folder.
 Some containers that run as root can leave behind files owned by root that can cause
 errors when checking out code.
+
+---
+
+## drupal-security-update
+> Usage:
+* `phase2/octane-actions/actions/drupal-security-update@main`
+> Inputs:
+* `anthropic_api_key`: (required) Anthropic API key for Claude
+* `github_token`: GitHub token for creating branches and PRs. Defaults to `github.token`
+* `working_directory`: Directory containing composer.json. Defaults to `.`
+* `base_branch`: Base branch for the PR. Defaults to `main`
+* `dry_run`: Check for vulnerabilities without creating PR. Defaults to `false`
+* `branch_prefix`: Prefix for the created branch name. Defaults to `issue/`
+* `pr_reviewers`: Comma-separated list of GitHub usernames to request review from
+* `slack_bot_token`: Slack bot OAuth token for posting notifications
+* `slack_channel_id`: Slack channel ID to post notification when PR is created
+
+> Outputs:
+* `has_vulnerabilities`: Whether security vulnerabilities were found
+* `pr_url`: URL of the created pull request (if any)
+* `vulnerabilities_found`: Number of vulnerabilities found
+
+Automatically updates Drupal Composer dependencies with security vulnerabilities.
+Runs `composer audit` to detect vulnerabilities, then uses Claude to intelligently update
+only direct dependencies listed in `composer.json`, handle patch conflicts by searching
+drupal.org issue queues, and create a PR with a detailed description of changes.
+
+See [action README](actions/drupal-security-update/README.md) for an example and
+required tools expected in runner environment.
+
+---
 
 ## Contributing to this repository
 
