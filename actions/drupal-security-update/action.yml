@@ -90,7 +90,7 @@ runs:
           echo "::notice::No security vulnerabilities found"
         fi
 
-    - name: Exit if no vulnerabilities or dry run
+    - name: Stop if no vulnerabilities found or this is a dry run
       if: steps.audit.outputs.has_vulnerabilities != 'true' || inputs.dry_run == 'true'
       shell: bash
       run: |
@@ -101,11 +101,17 @@ runs:
           echo "Vulnerabilities: ${{ steps.audit.outputs.vulnerability_count }}"
         fi
 
-    - name: Resolve action path
+    - name: Resolve action path and ensure instructions are there
       id: action-path
       if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
       shell: bash
-      run: echo "path=$GITHUB_ACTION_PATH" >> $GITHUB_OUTPUT
+      run: |
+        INSTRUCTIONS_PATH="$GITHUB_ACTION_PATH/instructions.md"
+        if [ ! -f "$INSTRUCTIONS_PATH" ]; then
+          echo "::error::instructions.md not found at $INSTRUCTIONS_PATH"
+          exit 1
+        fi
+        echo "path=$GITHUB_ACTION_PATH" >> $GITHUB_OUTPUT
 
     - name: Run Claude Code for updates
       if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'

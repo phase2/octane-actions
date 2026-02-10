@@ -33,17 +33,12 @@ If a vulnerable package is NOT in composer.json:
 
 1. Find what requires it:
    ```bash
-   composer depends vendor/vulnerable-package
+   composer why vendor/vulnerable-package
    ```
 
 2. Trace up to a direct dependency (one that IS in composer.json)
 
-3. Update ONLY that direct dependency:
-   ```bash
-   composer update direct/dependency --with-dependencies
-   ```
-
-4. If the transitive vulnerability persists, document it in pr_body.md as "requires upstream fix"
+3. If the transitive vulnerability persists after updates, document it in pr_body.md as "requires upstream fix"
 
 ### 3. Update Vulnerable Direct Dependencies
 For each vulnerable package that IS in `composer.json` perform the minimal update necessary to
@@ -57,7 +52,7 @@ composer update vendor/package --patch-only --with-dependencies
 
 Specific version request
 ```bash
-composer update --with vendor/package:1.0.1 --with-dependencies
+composer update vendor/package --with vendor/package:1.0.1 --with-dependencies
 ```
 
 **Reminder**: Never run `composer update` on a package unless you have confirmed it exists in composer.json.
@@ -84,7 +79,7 @@ Local patches are sometimes used for changes which aren't appropriate as filed i
 and sometimes to capture available patches that aren't guaranteed to be stable from issues.
 
 1. Attempt to determine if the local patch is still necessary. If not, remove patch and document reasoning.
-2. If local patch is necessary and it was a snapshot of an issue, attempt to resolve as a remote patch first.
+2. If local patch is necessary and it was a snapshot of a remote patch, attempt to resolve as a remote patch first.
 3. For patches which aren't resolved by previous steps, attempt to reroll patch against new package version
 4. If reroll succeeds: update patch file
 5. If reroll fails: document conflict for manual resolution
@@ -102,7 +97,7 @@ Save to `pr_body.md` with:
 - Any patch changes (updated URLs, removed patches, rerolled patches)
 - Breaking changes from changelogs (if any)
 - Conflicts requiring manual resolution (if any)
-- Transitive dependency vulnerabilities that were NOT updated (list the vulnerable package and which direct dependency should be updated upstream to resolve it)
+- Transitive dependency vulnerabilities that were NOT updated. List the vulnerable package and which direct dependency should be updated upstream to resolve it.
 
 ### 7. Create Commit Message
 Save to `commit_message.txt` with a concise commit message following this format:
