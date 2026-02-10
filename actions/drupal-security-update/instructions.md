@@ -71,8 +71,8 @@ Format in composer.json: `"ISSUE_NUMBER - Description": "URL"`
 1. Extract issue number from patch description
 2. Check issue queue: `https://www.drupal.org/node/$ISSUE_NUMBER`
 3. Find latest patch for target package version with positive test results
-4. If latest postive patch is a patch or diff from git.drupalcode.org, download it and store it locally as
-those can change over time as merge requests are updated. Store is locally using the naming convention:
+4. If latest positive patch is a patch or diff from git.drupalcode.org, download it and store it locally as
+those can change over time as merge requests are updated. Use the naming convention:
 module_name-issue_number-comment_number.patch
 5. Update patch URL in composer.json
 6. If issue marked fixed in target version: remove patch
