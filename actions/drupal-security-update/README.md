@@ -12,7 +12,7 @@ Automatically update Drupal Composer dependencies with security vulnerabilities 
   - Rerolling local patches when needed
 - Creates a PR with detailed description of changes
 - Optionally deduplicates PRs by closing stale security update PRs before creating a new one (defaults to deduplication)
-- Optionally sends slack notification that an update is available
+- Optionally sends Slack notification that an update is available
 
 ## Usage
 

@@ -67,7 +67,7 @@ outputs:
     value: ${{ steps.audit.outputs.vulnerability_count }}
   pr_action:
     description: 'Action taken for PR (create, supersede)'
-    value: ${{ steps.existing-pr.outputs.action }}
+    value: ${{ steps.existing-pr.outputs.action || 'create' }}
   superseded_pr:
     description: 'PR number(s) that were superseded (comma-separated if multiple)'
     value: ${{ steps.existing-pr.outputs.superseded_prs }}
@@ -239,11 +239,12 @@ runs:
         github-token: ${{ inputs.github_token }}
         script: |
           // Find open PRs with the security label on the target base branch
-          const { data: prs } = await github.rest.pulls.list({
+          const prs = await github.paginate(github.rest.pulls.list, {
             owner: context.repo.owner,
             repo: context.repo.repo,
             state: 'open',
-            base: '${{ inputs.base_branch }}'
+            base: '${{ inputs.base_branch }}',
+            per_page: 100
           });
 
           // Filter to PRs with the matching label, excluding the just-created PR
@@ -282,12 +283,16 @@ runs:
               state: 'closed'
             });
 
-            // Delete the branch associated with the closed PR
-            await github.rest.git.deleteRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: `heads/${pr.head.ref}`
-            });
+            // Delete the branch associated with the closed PR (best-effort)
+            try {
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${pr.head.ref}`
+              });
+            } catch (err) {
+              core.warning(`Could not delete branch ${pr.head.ref}: ${err.message}`);
+            }
 
             core.notice(`Closed superseded PR #${pr.number} and deleted branch ${pr.head.ref}`);
             closedPRs.push(pr.number);
@@ -325,12 +330,6 @@ runs:
               text:
                 type: mrkdwn
                 text: "A new security update PR has been created for *${{ github.repository }}*."
-            - type: section
-              fields:
-                - type: mrkdwn
-                  text: "*Repository:*\n${{ github.repository }}"
-                - type: mrkdwn
-                  text: "*Vulnerabilities Found:*\n${{ steps.audit.outputs.vulnerability_count }}"
             - type: section
               fields:
                 - type: mrkdwn
