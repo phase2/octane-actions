@@ -11,6 +11,8 @@ Automatically update Drupal Composer dependencies with security vulnerabilities 
   - Resolving patch conflicts by searching drupal.org issue queues
   - Rerolling local patches when needed
 - Creates a PR with detailed description of changes
+- Optionally deduplicates PRs by closing stale security update PRs before creating a new one (defaults to deduplication)
+- Optionally sends slack notification that an update is available
 
 ## Usage
 
@@ -37,6 +39,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      issues: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,6 +62,8 @@ jobs:
 | `dry_run` | Check for vulnerabilities without creating PR | No | `false` |
 | `branch_prefix` | Prefix for the created branch name | No | `issue/` |
 | `pr_reviewers` | Comma-separated list of GitHub usernames to request review from | No | - |
+| `pr_label` | Label applied to PRs for deduplication. Set to empty string to disable labeling. | No | `drupal-security-update` |
+| `deduplicate_prs` | If true, close existing open PRs with the same label before creating a new one. Requires pr_label not be disabled. | No | `true` |
 | `slack_bot_token` | Slack bot OAuth token for posting notifications | No | - |
 | `slack_channel_id` | Slack channel ID to post notification when PR is created | No | - |
 
@@ -69,6 +74,8 @@ jobs:
 | `has_vulnerabilities` | Whether security vulnerabilities were found |
 | `pr_url` | URL of the created pull request (if any) |
 | `vulnerabilities_found` | Number of vulnerabilities found |
+| `pr_action` | Action taken for PR (`create` or `supersede`) |
+| `superseded_pr` | PR number(s) that were superseded (comma-separated if multiple) |
 
 ## Example: Dry Run Check
 
@@ -118,7 +125,10 @@ This example posts a Slack notification when a PR is created.
 - PHP and Composer must be installed in the runner environment
 - `jq` must be installed in the runner environment (used to parse audit output)
 - The repository must have a `composer.json` file
-- GitHub token must have permissions to create branches and pull requests
+- GitHub token must have the following permissions:
+  - `contents: write` — creating branches, commits, and deleting branches during deduplication
+  - `pull-requests: write` — creating and closing PRs, assigning reviewers
+  - `issues: write` — applying labels to PRs (GitHub treats PRs as issues for labeling)
 
 ## How It Works
 
@@ -127,6 +137,7 @@ This example posts a Slack notification when a PR is created.
    - Creates a new branch (using configured prefix, e.g., `issue/autoupdate-YYYYMMDDHHMM`)
    - Invokes Claude AI to perform the updates
    - Claude updates vulnerable packages and handles any patch conflicts
-   - Commits changes and creates a pull request
+   - Commits changes and creates a pull request (labeled for future deduplication)
    - Requests review from specified users (if configured)
+   - Closes any existing open PRs with the same label (if deduplication is enabled)
    - Sends a Slack notification (if configured)

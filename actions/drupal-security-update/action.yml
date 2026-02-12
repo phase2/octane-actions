@@ -34,6 +34,14 @@ inputs:
     description: 'Comma-separated list of GitHub usernames to request review from on the created PR'
     required: false
     default: ''
+  pr_label:
+    description: 'Label applied to PRs for deduplication. Set to empty string to disable labeling.'
+    required: false
+    default: 'drupal-security-update'
+  deduplicate_prs:
+    description: 'If true, close existing open PRs with the same label before creating a new one'
+    required: false
+    default: 'true'
   slack_bot_token:
     description: 'Slack bot OAuth token for posting notifications (requires slack_channel_id)'
     required: false
@@ -53,6 +61,12 @@ outputs:
   vulnerabilities_found:
     description: 'Number of vulnerabilities found'
     value: ${{ steps.audit.outputs.vulnerability_count }}
+  pr_action:
+    description: 'Action taken for PR (create, supersede)'
+    value: ${{ steps.existing-pr.outputs.action }}
+  superseded_pr:
+    description: 'PR number(s) that were superseded (comma-separated if multiple)'
+    value: ${{ steps.existing-pr.outputs.superseded_prs }}
 
 runs:
   using: 'composite'
@@ -209,8 +223,74 @@ runs:
         body: ${{ steps.prepare-pr.outputs.pr_body }}
         commit-message: ${{ steps.prepare-pr.outputs.commit_message }}
         reviewers: ${{ inputs.pr_reviewers }}
+        labels: ${{ inputs.pr_label }}
         committer: drupal-security-update[bot] <drupal-security-update@users.noreply.github.com>
         author: drupal-security-update[bot] <drupal-security-update@users.noreply.github.com>
+
+    - name: Close existing security PRs
+      if: steps.create-pr.outputs.pull-request-url != '' && inputs.deduplicate_prs == 'true' && inputs.pr_label != ''
+      id: existing-pr
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          // Find open PRs with the security label on the target base branch
+          const { data: prs } = await github.rest.pulls.list({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            base: '${{ inputs.base_branch }}'
+          });
+
+          // Filter to PRs with the matching label, excluding the just-created PR
+          const newPrNumber = parseInt('${{ steps.create-pr.outputs.pull-request-number }}', 10);
+          const securityPRs = prs.filter(pr =>
+            pr.number !== newPrNumber &&
+            pr.labels.some(l => l.name === '${{ inputs.pr_label }}')
+          );
+
+          if (securityPRs.length === 0) {
+            core.info('No existing security PRs found');
+            core.setOutput('action', 'create');
+            return;
+          }
+
+          // Close each existing security PR with a comment
+          const closedPRs = [];
+          for (const pr of securityPRs) {
+            // Skip PRs from forks
+            if (pr.head.repo?.full_name !== '${{ github.repository }}') {
+              core.info(`Skipping fork PR #${pr.number}`);
+              continue;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: `This PR has been superseded by a newer security update. Closing in favor of #${newPrNumber}.`
+            });
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              state: 'closed'
+            });
+
+            // Delete the branch associated with the closed PR
+            await github.rest.git.deleteRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${pr.head.ref}`
+            });
+
+            core.notice(`Closed superseded PR #${pr.number} and deleted branch ${pr.head.ref}`);
+            closedPRs.push(pr.number);
+          }
+
+          core.setOutput('action', 'supersede');
+          core.setOutput('superseded_prs', closedPRs.join(','));
 
     - name: Report PR status
       if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
