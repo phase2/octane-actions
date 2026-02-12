@@ -50,6 +50,10 @@ inputs:
     description: 'Slack channel ID to post notification when PR is created (requires slack_bot_token)'
     required: false
     default: ''
+  slack_errors:
+    description: 'If true, fail the workflow when Slack notification fails'
+    required: false
+    default: 'false'
 
 outputs:
   has_vulnerabilities:
@@ -308,9 +312,10 @@ runs:
       with:
         method: chat.postMessage
         token: ${{ inputs.slack_bot_token }}
+        errors: ${{ inputs.slack_errors }}
         payload: |
           channel: ${{ inputs.slack_channel_id }}
-          text: "Drupal Security Update Required"
+          text: "Drupal Security Update: ${{ steps.audit.outputs.vulnerability_count }} vulnerabilities found in ${{ github.repository }}. Review PR: ${{ steps.create-pr.outputs.pull-request-url }}"
           blocks:
             - type: header
               text:
@@ -319,7 +324,7 @@ runs:
             - type: section
               text:
                 type: mrkdwn
-                text: "A new pull request has been created to address security vulnerabilities."
+                text: "A new security update PR has been created for *${{ github.repository }}*."
             - type: section
               fields:
                 - type: mrkdwn
@@ -327,11 +332,12 @@ runs:
                 - type: mrkdwn
                   text: "*Vulnerabilities Found:*\n${{ steps.audit.outputs.vulnerability_count }}"
             - type: section
-              text:
-                type: mrkdwn
-                text: "*Pull Request:* <${{ steps.create-pr.outputs.pull-request-url }}|View PR>"
-            - type: divider
+              fields:
+                - type: mrkdwn
+                  text: "*Action Required:*\n<${{ steps.create-pr.outputs.pull-request-url }}|Review and merge PR>"
+                - type: mrkdwn
+                  text: "*Vulnerabilities Found:*\n${{ steps.audit.outputs.vulnerability_count }}"
             - type: context
               elements:
                 - type: mrkdwn
-                  text: "Please review and merge this PR as soon as possible."
+                  text: "Drupal Security Update Action"

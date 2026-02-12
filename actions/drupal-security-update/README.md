@@ -66,6 +66,7 @@ jobs:
 | `deduplicate_prs` | If true, close existing open PRs with the same label before creating a new one. Requires pr_label not be disabled. | No | `true` |
 | `slack_bot_token` | Slack bot OAuth token for posting notifications | No | - |
 | `slack_channel_id` | Slack channel ID to post notification when PR is created | No | - |
+| `slack_errors` | If true, fail the workflow when Slack notification fails | No | `false` |
 
 ## Outputs
 

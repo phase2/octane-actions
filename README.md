@@ -166,6 +166,7 @@ errors when checking out code.
 * `deduplicate_prs`: If true, close existing open PRs with the same label before creating a new one. Defaults to `true`. Requires pr_label not be disabled.
 * `slack_bot_token`: Slack bot OAuth token for posting notifications
 * `slack_channel_id`: Slack channel ID to post notification when PR is created
+* `slack_errors`: If true, fail the workflow when Slack notification fails. Defaults to `false`
 
 > Outputs:
 * `has_vulnerabilities`: Whether security vulnerabilities were found
