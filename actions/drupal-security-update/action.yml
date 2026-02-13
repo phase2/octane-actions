@@ -311,7 +311,7 @@ runs:
           echo "::warning::Vulnerabilities found but no changes were made (packages may already be at latest versions)"
         fi
 
-    - name: Post Slack notification
+    - name: Post Slack notification for PR
       if: steps.create-pr.outputs.pull-request-url != '' && inputs.slack_channel_id != '' && inputs.slack_bot_token != ''
       uses: slackapi/slack-github-action@v2
       with:
@@ -336,7 +336,29 @@ runs:
                   text: "*Action Required:*\n<${{ steps.create-pr.outputs.pull-request-url }}|Review and merge PR>"
                 - type: mrkdwn
                   text: "*Vulnerabilities Found:*\n${{ steps.audit.outputs.vulnerability_count }}"
-            - type: context
-              elements:
+
+    - name: Post Slack notification for unresolvable vulnerabilities
+      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true' && steps.create-pr.outputs.pull-request-url == '' && inputs.slack_channel_id != '' && inputs.slack_bot_token != ''
+      uses: slackapi/slack-github-action@v2
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack_bot_token }}
+        errors: ${{ inputs.slack_errors }}
+        payload: |
+          channel: ${{ inputs.slack_channel_id }}
+          text: "Drupal Security Update: ${{ steps.audit.outputs.vulnerability_count }} vulnerabilities found in ${{ github.repository }} but could not be automatically resolved. Manual intervention required."
+          blocks:
+            - type: header
+              text:
+                type: plain_text
+                text: ":warning: Drupal Security Update - Manual Action Required"
+            - type: section
+              text:
+                type: mrkdwn
+                text: "Security vulnerabilities were detected in *${{ github.repository }}* but could not be automatically resolved."
+            - type: section
+              fields:
                 - type: mrkdwn
-                  text: "Drupal Security Update Action"
+                  text: "*Action Required:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Manually update reviewing workflow run for details>"
+                - type: mrkdwn
+                  text: "*Vulnerabilities Found:*\n${{ steps.audit.outputs.vulnerability_count }}"
