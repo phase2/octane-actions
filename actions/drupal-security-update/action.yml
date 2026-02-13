@@ -66,8 +66,8 @@ outputs:
     description: 'Number of vulnerabilities found'
     value: ${{ steps.audit.outputs.vulnerability_count }}
   pr_action:
-    description: 'Action taken for PR (create, supersede)'
-    value: ${{ steps.existing-pr.outputs.action || 'create' }}
+    description: 'Action taken for PR (create, supersede, empty if no PR created)'
+    value: ${{ (steps.create-pr.outputs.pull-request-url != '' && (steps.existing-pr.outputs.action || 'create')) || '' }}
   superseded_pr:
     description: 'PR number(s) that were superseded (comma-separated if multiple)'
     value: ${{ steps.existing-pr.outputs.superseded_prs }}
@@ -294,6 +294,11 @@ runs:
             closedPRs.push(pr.number);
           }
 
+          if (closedPRs.length === 0) {
+            core.info('No eligible security PRs to close (all were forks)');
+            core.setOutput('action', 'create');
+            return;
+          }
           core.setOutput('action', 'supersede');
           core.setOutput('superseded_prs', closedPRs.join(','));
 
