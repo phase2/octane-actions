@@ -26,9 +26,9 @@ Phase2 organization.
 name: Drupal Security Update Action
 
 on:
-  schedule:
-    - cron: '0 17 * * 3'  # Every Wednesday in the security update window
   workflow_dispatch:
+  repository_dispatch:
+    types: [drupal-security-update-dispatch]
 
 jobs:
   security-update:
