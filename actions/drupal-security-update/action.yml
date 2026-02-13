@@ -154,10 +154,6 @@ runs:
           Working directory: ${{ inputs.working_directory }}
 
           Key requirements:
-          - CRITICAL: Only update packages that are DIRECT dependencies (listed in composer.json require/require-dev)
-          - NEVER run composer update on transitive dependencies or composer itself
-          - Before updating any package, verify it exists in composer.json with: grep -E "\"vendor/package\"" composer.json
-          - Handle patch failures by searching drupal.org issue queues
           - Run validation before completing
           - Create pr_body.md with security advisory links and any patch changes
           - Create commit_message.txt with a concise commit message summarizing the updates
@@ -359,6 +355,6 @@ runs:
             - type: section
               fields:
                 - type: mrkdwn
-                  text: "*Action Required:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Manually update reviewing workflow run for details>"
+                  text: "*Action Required:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Review workflow run for details and manually update>"
                 - type: mrkdwn
                   text: "*Vulnerabilities Found:*\n${{ steps.audit.outputs.vulnerability_count }}"
