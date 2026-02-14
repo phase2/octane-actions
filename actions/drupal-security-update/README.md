@@ -16,8 +16,11 @@ Automatically update Drupal Composer dependencies with security vulnerabilities 
 
 ## Usage
 
-Note usage examples demonstrate use of Phase2 organization level secret for anthropic_api_key.
-You should not need to configure a project-level key for projects in the Phase2 organization.
+Note usage examples demonstrate use of Phase2 organization level secrets for anthropic_api_key
+and slack_bot_token.
+
+You should not need to configure a project-level secret for these items for projects in the
+Phase2 organization.
 
 ### Basic Usage
 
@@ -86,9 +89,8 @@ To fail the workflow if the Slack notification fails (e.g., bot not invited, inv
 | `dry_run` | Check for vulnerabilities without creating PR | No | `false` |
 | `branch_prefix` | Prefix for the created branch name | No | `issue/` |
 | `pr_reviewers` | Comma-separated list of GitHub usernames to request review from | No | - |
-| `slack_oauth_token` | Slack App OAuth Token for notifications | No | - |
-| `slack_channel` | Slack channel name (without #) | No | - |
-| `slack_errors` | Fail workflow if Slack notification fails | No | `false` |
+| `slack_bot_token` | Slack bot OAuth token for posting notifications | No | - |
+| `slack_channel_id` | Slack channel ID to post notification when PR is created | No | - |
 
 ## Outputs
 
@@ -131,6 +133,19 @@ This example:
 - Creates branches with the prefix `security/` (e.g., `security/autoupdate-202601311200`)
 - Requests review from users `octocat` and `hubot`
 
+## Example: With Slack Notification
+
+```yaml
+- name: Drupal Security Update
+  uses: phase2/octane-actions/actions/drupal-security-update@main
+  with:
+    anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
+    slack_bot_token: ${{ secrets.SLACK_DRUPAL_SECURITY_UPDATES_BOT_TOKEN }}
+    slack_channel_id: ${{ secrets.SLACK_CHANNEL_ID }}
+```
+
+This example posts a Slack notification when a PR is created.
+
 ## Requirements
 
 - PHP and Composer must be installed in the runner environment
@@ -158,6 +173,7 @@ permissions:
    - Claude updates vulnerable packages and handles any patch conflicts
    - Commits changes and creates a pull request
    - Requests review from specified users (if configured)
+   - Sends a Slack notification (if configured)
 
 ## Drupal Security Release Schedule
 

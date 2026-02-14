@@ -162,6 +162,8 @@ errors when checking out code.
 * `dry_run`: Check for vulnerabilities without creating PR. Defaults to `false`
 * `branch_prefix`: Prefix for the created branch name. Defaults to `issue/`
 * `pr_reviewers`: Comma-separated list of GitHub usernames to request review from
+* `slack_bot_token`: Slack bot OAuth token for posting notifications
+* `slack_channel_id`: Slack channel ID to post notification when PR is created
 
 > Outputs:
 * `has_vulnerabilities`: Whether security vulnerabilities were found
