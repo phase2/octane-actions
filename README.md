@@ -162,13 +162,18 @@ errors when checking out code.
 * `dry_run`: Check for vulnerabilities without creating PR. Defaults to `false`
 * `branch_prefix`: Prefix for the created branch name. Defaults to `issue/`
 * `pr_reviewers`: Comma-separated list of GitHub usernames to request review from
+* `pr_label`: Label applied to PRs for deduplication. Set to empty string to disable. Defaults to `drupal-security-update`
+* `deduplicate_prs`: If true, close existing open PRs with the same label before creating a new one. Defaults to `true`. Requires pr_label not be disabled.
 * `slack_bot_token`: Slack bot OAuth token for posting notifications
 * `slack_channel_id`: Slack channel ID to post notification when PR is created
+* `slack_errors`: If true, fail the workflow when Slack notification fails. Defaults to `false`
 
 > Outputs:
 * `has_vulnerabilities`: Whether security vulnerabilities were found
 * `pr_url`: URL of the created pull request (if any)
 * `vulnerabilities_found`: Number of vulnerabilities found
+* `pr_action`: Action taken for PR (`create` or `supersede`)
+* `superseded_pr`: PR number(s) that were superseded (comma-separated if multiple)
 
 Automatically updates Drupal Composer dependencies with security vulnerabilities.
 Runs `composer audit` to detect vulnerabilities, then uses Claude to intelligently update
