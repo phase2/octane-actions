@@ -89,7 +89,8 @@ runs:
       working-directory: ${{ inputs.working_directory }}
       run: |
         set +e
-        AUDIT_OUTPUT=$(composer audit --format=json 2>/dev/null)
+        # --no-plugins prevents Composer plugins from writing to stdout and corrupting the JSON output
+        AUDIT_OUTPUT=$(composer audit --format=json --no-plugins 2>/dev/null)
         AUDIT_EXIT_CODE=$?
         set -e
 
@@ -98,6 +99,11 @@ runs:
         echo "GHAAJEOF" >> $GITHUB_OUTPUT
 
         if [ $AUDIT_EXIT_CODE -ne 0 ]; then
+          if ! echo "$AUDIT_OUTPUT" | jq -e . >/dev/null 2>&1; then
+            echo "::error::composer audit did not produce valid JSON (exit code: $AUDIT_EXIT_CODE). Raw output:"
+            echo "$AUDIT_OUTPUT"
+            exit 1
+          fi
           VULN_COUNT=$(echo "$AUDIT_OUTPUT" | jq -r '.advisories | to_entries | map(.value | length) | add // 0')
           echo "has_vulnerabilities=true" >> $GITHUB_OUTPUT
           echo "vulnerability_count=$VULN_COUNT" >> $GITHUB_OUTPUT
