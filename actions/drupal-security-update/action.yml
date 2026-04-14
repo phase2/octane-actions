@@ -104,7 +104,9 @@ runs:
             echo "$AUDIT_OUTPUT"
             exit 1
           fi
-          VULN_COUNT=$(echo "$AUDIT_OUTPUT" | jq -r '.advisories | to_entries | map(.value | length) | add // 0')
+        fi
+        VULN_COUNT=$(echo "$AUDIT_OUTPUT" | jq -r '.advisories | to_entries | map(.value | length) | add // 0')
+        if [ "$VULN_COUNT" -gt 0 ]; then
           echo "has_vulnerabilities=true" >> $GITHUB_OUTPUT
           echo "vulnerability_count=$VULN_COUNT" >> $GITHUB_OUTPUT
           echo "::warning::Found $VULN_COUNT security vulnerabilities in Composer dependencies"
