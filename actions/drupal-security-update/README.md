@@ -115,7 +115,7 @@ This example:
   uses: phase2/octane-actions/actions/drupal-security-update@main
   with:
     anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
-    slack_bot_token: ${{ secrets.SLACK_DRUPAL_SECURITY_UPDATES_BOT_TOKEN }}
+    slack_bot_token: ${{ vars.SLACK_DRUPAL_SECURITY_UPDATES_BOT_TOKEN }}
     slack_channel_id: ${{ secrets.SLACK_CHANNEL_ID }}
 ```
 
