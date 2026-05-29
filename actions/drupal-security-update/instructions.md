@@ -51,7 +51,7 @@ composer update vendor/package --with vendor/package:1.0.1 --with-dependencies
 If the fixed version is not yet available in the package repository (i.e., `composer update` succeeds but the package version does not change, and the vulnerability persists in re-audit):
 
 1. Wait for the number of seconds specified as "Package wait seconds" in the workflow prompt, then retry the update once.
-2. If still unavailable, document in pr_body.md as "fixed version not yet published" with the advisory details and a note to re-run this workflow once the version is released.
+2. If still unavailable, document in pr_body.md with an attention grabbing opening line like "❌ IMPORTANT: fixed version not yet published. This workflow must be re-run once fixed version is released to resolve the vulnerability."
 
 ### 4. Re-check Transitive Dependency Vulnerabilities
 After updating direct dependencies, re-run `composer audit --no-cache --format=json` to check if transitive vulnerabilities were resolved as a side effect.
@@ -63,15 +63,17 @@ For any transitive vulnerability that persists:
    composer why vendor/vulnerable-package
    ```
 
-2. Try updating the transitive package directly:
+2. If the vulnerability can be resolved by updating the package which requires it, update the the requiring package. Otherwise, move to the next step.
+
+3. Try updating the transitive package directly:
    ```bash
    composer update vendor/vulnerable-package
    ```
    This will update it to the latest version allowed by the parent package's constraints without modifying composer.json.
 
-3. If the update succeeds and resolves the vulnerability, include it in the PR description.
+4. If the update succeeds and resolves the vulnerability, include it in the PR description.
 
-4. If the update fails due to constraint conflicts (the parent package doesn't allow the fixed version), document it in pr_body.md as "requires upstream fix" and note which direct dependency needs to release an update.
+5. If the update fails due to constraint conflicts (the parent package doesn't allow the fixed version), document it in pr_body.md as "requires upstream fix" and note which direct dependency needs to release an update.
 
 #### New Vulnerabilities Found in Re-audit
 If the re-audit surfaces an advisory that was **not** present in the original audit JSON provided at the start of this run:
