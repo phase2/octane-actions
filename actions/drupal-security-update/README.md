@@ -67,6 +67,7 @@ jobs:
 | `slack_bot_token` | Slack bot OAuth token for posting notifications | No | - |
 | `slack_channel_id` | Slack channel ID to post notification when PR is created | No | - |
 | `slack_errors` | If true, fail the workflow when Slack notification fails | No | `false` |
+| `package_wait_seconds` | Seconds to wait and retry if a fixed package version is not yet published | No | `300` |
 
 ## Outputs
 

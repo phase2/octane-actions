@@ -54,6 +54,10 @@ inputs:
     description: 'If true, fail the workflow when Slack notification fails'
     required: false
     default: 'false'
+  package_wait_seconds:
+    description: 'Seconds to wait and retry if a fixed package version is not yet published'
+    required: false
+    default: '300'
 
 outputs:
   has_vulnerabilities:
@@ -90,7 +94,7 @@ runs:
       run: |
         set +e
         # --no-plugins prevents Composer plugins from writing to stdout and corrupting the JSON output
-        AUDIT_OUTPUT=$(composer audit --format=json --no-plugins 2>/dev/null)
+        AUDIT_OUTPUT=$(composer audit --no-cache --format=json --no-plugins 2>/dev/null)
         AUDIT_EXIT_CODE=$?
         set -e
 
@@ -161,6 +165,7 @@ runs:
           ```
 
           Working directory: ${{ inputs.working_directory }}
+          Package wait seconds: ${{ inputs.package_wait_seconds }}
 
           Key requirements:
           - Run validation before completing
