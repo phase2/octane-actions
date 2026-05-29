@@ -94,7 +94,7 @@ runs:
       run: |
         set +e
         # --no-plugins prevents Composer plugins from writing to stdout and corrupting the JSON output
-        AUDIT_OUTPUT=$(composer audit --format=json --no-plugins 2>/dev/null)
+        AUDIT_OUTPUT=$(composer audit --no-cache --format=json --no-plugins 2>/dev/null)
         AUDIT_EXIT_CODE=$?
         set -e
 
