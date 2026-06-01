@@ -152,7 +152,7 @@ runs:
         show_full_output: true
         allowed_bots: "*"
         claude_args: |
-          --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch"
+          --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch" --model claude-sonnet-4-6
         prompt: |
           Perform a Drupal security update based on composer audit results.
 
