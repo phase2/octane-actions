@@ -353,7 +353,7 @@ runs:
                   text: "*Vulnerabilities Found:*\n${{ steps.audit.outputs.vulnerability_count }}"
 
     - name: Post Slack notification for unresolvable vulnerabilities
-      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true' && steps.create-pr.outputs.pull-request-url == '' && inputs.slack_channel_id != '' && inputs.slack_bot_token != ''
+      if: ${{ !cancelled() && steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true' && steps.create-pr.outputs.pull-request-url == '' && inputs.slack_channel_id != '' && inputs.slack_bot_token != '' }}
       uses: slackapi/slack-github-action@v2
       with:
         method: chat.postMessage
