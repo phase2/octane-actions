@@ -152,7 +152,7 @@ runs:
         show_full_output: true
         allowed_bots: "*"
         claude_args: |
-          --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch"
+          --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch" --model claude-sonnet-4-6 --max-turns 100
         prompt: |
           Perform a Drupal security update based on composer audit results.
 
@@ -353,7 +353,7 @@ runs:
                   text: "*Vulnerabilities Found:*\n${{ steps.audit.outputs.vulnerability_count }}"
 
     - name: Post Slack notification for unresolvable vulnerabilities
-      if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true' && steps.create-pr.outputs.pull-request-url == '' && inputs.slack_channel_id != '' && inputs.slack_bot_token != ''
+      if: ${{ !cancelled() && steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true' && steps.create-pr.outputs.pull-request-url == '' && inputs.slack_channel_id != '' && inputs.slack_bot_token != '' }}
       uses: slackapi/slack-github-action@v2
       with:
         method: chat.postMessage
