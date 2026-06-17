@@ -29,6 +29,16 @@ If the package is NOT found in composer.json, **DO NOT run composer update on it
 
 Transitive dependencies (packages pulled in by other packages) are handled separately in step 4 after direct dependencies are updated.
 
+#### Packages installed via a metapackage (e.g. Drupal core)
+Some advisories target a package installed transitively through a metapackage
+rather than required directly. The common case is `drupal/core`: projects
+require `drupal/core-recommended` (and usually `drupal/core-composer-scaffold`
+and `drupal/core-project-message`) but NOT `drupal/core` itself.
+
+When `composer audit` reports an advisory against `drupal/core`, do NOT skip it
+because `drupal/core` is absent from `composer.json`. Treat the `drupal/core-*`
+metapackages that ARE present as the update target (see step 3).
+
 ### 3. Update Vulnerable Direct Dependencies
 For each vulnerable package that IS in `composer.json` perform the minimal update necessary to
 resolve the advisory, even if the constraints in composer.json allow for a bigger update. There
@@ -46,6 +56,29 @@ composer update vendor/package --with vendor/package:1.0.1 --with-dependencies
 ```
 
 **Reminder**: Never run `composer update` on a package unless you have confirmed it exists in composer.json.
+
+#### Drupal core
+Drupal core is a special case. Confirm which core metapackages are present:
+```bash
+grep -E "\"drupal/core-" composer.json
+```
+Then update them together, using `--with-all-dependencies` so Composer can move
+`drupal/core` (pinned transitively by `drupal/core-recommended`) to the secure
+release:
+```bash
+composer update "drupal/core-*" --with-all-dependencies
+```
+This is the update method documented in the Drupal core release notes. Quote the
+pattern so the shell does not expand it. Updating the `drupal/core-*`
+metapackages alone with `--with-dependencies` will leave `drupal/core` behind,
+because core-recommended pins exact versions; `--with-all-dependencies` is
+required so those pinned dependencies can move.
+
+To hold core to the exact fixed version and avoid a larger minor bump, pin
+core-recommended explicitly:
+```bash
+composer update "drupal/core-*" --with drupal/core-recommended:10.6.11 --with-all-dependencies
+```
 
 #### Handle Unpublished Fixed Versions
 If the fixed version is not yet available in the package repository (i.e., `composer update` succeeds but the package version does not change, and the vulnerability persists in re-audit):
