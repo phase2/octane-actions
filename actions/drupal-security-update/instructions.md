@@ -108,6 +108,14 @@ For any transitive vulnerability that persists:
 
 5. If the update fails due to constraint conflicts (the parent package doesn't allow the fixed version), document it in pr_body.md as "requires upstream fix" and note which direct dependency needs to release an update.
 
+**Note on metapackage-pinned packages (e.g. `drupal/core`):** a plain
+`composer update vendor/package` will not move a package whose version is pinned
+by a metapackage, because the metapackage's exact constraint holds it in place.
+If `drupal/core` persists as a transitive advisory here, resolve it with the
+Drupal core command from step 3
+(`composer update "drupal/core-*" --with-all-dependencies`), not
+`composer update drupal/core`.
+
 #### New Vulnerabilities Found in Re-audit
 If the re-audit surfaces an advisory that was **not** present in the original audit JSON provided at the start of this run:
 
