@@ -45,6 +45,11 @@ Specific version request
 composer update vendor/package --with vendor/package:1.0.1 --with-dependencies
 ```
 
+When Drupal core updates are required, ensure all related core packages are updated
+```bash
+composer update "drupal/core-*" --with-all-dependencies
+```
+
 **Reminder**: Never run `composer update` on a package unless you have confirmed it exists in composer.json.
 
 #### Handle Unpublished Fixed Versions
