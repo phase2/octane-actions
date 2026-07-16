@@ -94,9 +94,11 @@ runs:
       run: |
         set +e
         # Plugins MUST stay enabled: composer audit relies on them to reach Drupal's
-        # advisory source. stderr is already discarded and output is --format=json,
-        # so plugin notices cannot corrupt the captured JSON. See octane-actions#54.
-        AUDIT_OUTPUT=$(composer audit --no-cache --format=json 2>/dev/null)
+        # advisory source. Capture stderr separately (kept out of the JSON on stdout,
+        # but not discarded) so failure diagnostics survive for the error path below.
+        # See octane-actions#54.
+        AUDIT_STDERR="$(mktemp)"
+        AUDIT_OUTPUT=$(composer audit --no-cache --format=json 2>"$AUDIT_STDERR")
         AUDIT_EXIT_CODE=$?
         set -e
 
@@ -106,12 +108,17 @@ runs:
 
         # composer audit exits non-zero when advisories ARE found, so a non-zero exit is
         # normal here; only invalid JSON is a real error. Validate unconditionally so a
-        # corrupted/empty payload fails loudly instead of counting as "0 vulnerabilities".
+        # corrupted/empty payload (e.g. an unreachable advisory source) fails loudly
+        # instead of counting as "0 vulnerabilities".
         if ! echo "$AUDIT_OUTPUT" | jq -e . >/dev/null 2>&1; then
           echo "::error::composer audit did not produce valid JSON (exit code: $AUDIT_EXIT_CODE). Raw output:"
           echo "$AUDIT_OUTPUT"
+          echo "composer audit stderr:"
+          cat "$AUDIT_STDERR"
+          rm -f "$AUDIT_STDERR"
           exit 1
         fi
+        rm -f "$AUDIT_STDERR"
         VULN_COUNT=$(echo "$AUDIT_OUTPUT" | jq -r '.advisories | to_entries | map(.value | length) | add // 0')
         if [ "$VULN_COUNT" -gt 0 ]; then
           echo "has_vulnerabilities=true" >> $GITHUB_OUTPUT
