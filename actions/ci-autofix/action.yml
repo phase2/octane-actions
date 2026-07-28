@@ -194,7 +194,14 @@ runs:
               .join(', ') || '(step not identified)';
             const block = `### Job: ${job.name}\nFailed step(s): ${failedSteps}\n\n${tail}\n`;
             if (total + block.length > MAX_TOTAL_CHARS) {
-              parts.push(`### Job: ${job.name}\n(excerpt omitted: total excerpt budget reached; fetch with the CI log tools)\n`);
+              // The omission marker counts against the budget too, so a run
+              // with many failed jobs cannot exceed MAX_TOTAL_CHARS on markers
+              // alone. A smaller later job may still fit, hence continue.
+              const marker = `### Job: ${job.name}\n(excerpt omitted: total excerpt budget reached; fetch with the CI log tools)\n`;
+              if (total + marker.length <= MAX_TOTAL_CHARS) {
+                parts.push(marker);
+                total += marker.length;
+              }
               continue;
             }
             parts.push(block);
@@ -222,11 +229,14 @@ runs:
         echo "path=$GITHUB_ACTION_PATH" >> $GITHUB_OUTPUT
 
     # Record the pre-run state so the change set can be attributed to the agent
-    # rather than to anything the checkout or a prior step left behind.
+    # rather than to anything the checkout or a prior step left behind. The
+    # changeset step below refuses to open a PR if this snapshot is non-empty.
+    # -uall is required for the same reason it is there: plain porcelain
+    # collapses an untracked directory to one line.
     - name: Snapshot workspace state
       shell: bash
       working-directory: ${{ inputs.working_directory }}
-      run: git status --porcelain > "${RUNNER_TEMP}/autofix-pre-status.txt" || true
+      run: git status --porcelain -uall > "${RUNNER_TEMP}/autofix-pre-status.txt" || true
 
     # continue-on-error so a Claude failure still reaches the notify path below
     # instead of silently ending the job. v1 does not declare a `conclusion`
@@ -320,6 +330,26 @@ runs:
           changes_made=$(printf '%s' "$STRUCTURED" | jq -r '.changes_made // false')
         fi
 
+        # Every value above is model output derived from untrusted build logs, so
+        # it is constrained before it reaches a step output or a Slack payload.
+        # A newline in summary would close the step-output heredoc and let the
+        # model inject further outputs, should_pr among them; a double quote
+        # would break the YAML payload the Slack action parses at runtime.
+        classification=$(printf '%s' "$classification" | tr -cd 'a-z' | cut -c1-16)
+        classification=${classification:-unknown}
+        # Rejected outright rather than stripped: jq renders a very small number
+        # in scientific notation, and dropping the characters it does not like
+        # would turn 1e-05 into 105, i.e. a near-zero confidence into one that
+        # clears any threshold. Anything unparseable falls back to 0, which
+        # cannot open a PR.
+        case "$confidence" in
+          ''|*[!0-9.]*) confidence=0 ;;
+        esac
+        fingerprint=$(printf '%s' "$fingerprint" | tr -cd 'a-z0-9:._-' | cut -c1-120)
+        summary=$(printf '%s' "$summary" | tr '\r\n' '  ' | tr -d '"' | cut -c1-500)
+        summary=${summary:-No summary produced.}
+        [ "$changes_made" = "true" ] || changes_made="false"
+
         # A fix PR requires a code classification AND confidence at or above the
         # threshold AND the agent reporting that it actually changed something.
         should_pr="false"
@@ -331,17 +361,15 @@ runs:
           fi
         fi
 
+        # summary is single-line after sanitising, so it needs no heredoc. That
+        # removes the fixed delimiter a model could otherwise have closed.
         {
           echo "classification=$classification"
           echo "confidence=$confidence"
           echo "fingerprint=$fingerprint"
           echo "changes_made=$changes_made"
           echo "should_pr=$should_pr"
-        } >> "$GITHUB_OUTPUT"
-        {
-          echo "summary<<GHAFSEOF"
-          echo "$summary"
-          echo "GHAFSEOF"
+          echo "summary=$summary"
         } >> "$GITHUB_OUTPUT"
 
         echo "Classification: $classification (confidence $confidence)"
@@ -361,11 +389,32 @@ runs:
         MAX_FILES: ${{ inputs.max_changed_files }}
       run: |
         set -uo pipefail
-        git status --porcelain > "${RUNNER_TEMP}/autofix-post-status.txt" || true
+
+        # -uall is load-bearing. Plain `git status --porcelain` collapses an
+        # untracked directory to a single line, so a runaway run that
+        # materialised a whole generated project would score 1 against MAX_FILES
+        # and sail straight through the guard meant to stop exactly that.
+        git status --porcelain -uall > "${RUNNER_TEMP}/autofix-post-status.txt" || true
         echo "Change set:"
         cat "${RUNNER_TEMP}/autofix-post-status.txt"
 
-        count=$(grep -c . "${RUNNER_TEMP}/autofix-post-status.txt" || true)
+        # Anything the checkout or a prior step left behind is not the agent's
+        # work, and create-pull-request would sweep it into the PR regardless.
+        if [ -s "${RUNNER_TEMP}/autofix-pre-status.txt" ]; then
+          echo "::error::Workspace was already dirty before the agent ran; refusing to open a PR."
+          cat "${RUNNER_TEMP}/autofix-pre-status.txt"
+          echo "sane=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # pr_body.md and commit_message.txt are the agent's handoff files rather
+        # than part of the fix, and Prepare PR metadata deletes them before the
+        # PR is created, so they must not consume the file budget either.
+        grep -vE '^\?\? (pr_body\.md|commit_message\.txt)$' \
+          "${RUNNER_TEMP}/autofix-post-status.txt" \
+          > "${RUNNER_TEMP}/autofix-changeset.txt" || true
+
+        count=$(grep -c . "${RUNNER_TEMP}/autofix-changeset.txt" || true)
         count=${count:-0}
         echo "changed_files=$count" >> "$GITHUB_OUTPUT"
 
@@ -381,9 +430,10 @@ runs:
         fi
 
         # Generated output must never be hand-edited. It may only change as a
-        # side effect of regenerating from an actions/ or commands/ source.
-        if grep -qE '^[[:space:]]*[AMD?]+[[:space:]]+\.github/workflows/' "${RUNNER_TEMP}/autofix-post-status.txt" \
-           && ! grep -qE 'actions/(src|includes)/' "${RUNNER_TEMP}/autofix-post-status.txt"; then
+        # side effect of regenerating from an actions/ or commands/ source. R and
+        # C cover a staged rename or copy, which would otherwise slip past.
+        if grep -qE '^[[:space:]]*[AMDRC?]+[[:space:]]+\.github/workflows/' "${RUNNER_TEMP}/autofix-changeset.txt" \
+           && ! grep -qE 'actions/(src|includes)/' "${RUNNER_TEMP}/autofix-changeset.txt"; then
           echo "::error::Generated .github/workflows/ changed with no corresponding actions source change. Refusing to open a PR."
           echo "sane=false" >> "$GITHUB_OUTPUT"
           exit 0
@@ -404,6 +454,13 @@ runs:
       run: |
         set -uo pipefail
 
+        # pr_body.md and commit_message.txt are written by the agent from
+        # untrusted log content, so a fixed heredoc delimiter appearing inside
+        # either would close the block early and inject extra step outputs. This
+        # delimiter is generated after the agent has finished, so it cannot be
+        # predicted by anything that influenced those files.
+        eof="GHAF$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+
         # Branch names carry a sanitised fingerprint for human readability plus a
         # timestamp for uniqueness. Superseding is handled explicitly by the dedup
         # step, so branches must not collide.
@@ -421,7 +478,7 @@ runs:
         marker="<!-- octane-autofix-fingerprint: ${FINGERPRINT} -->"
 
         {
-          echo "pr_body<<GHAFBEOF"
+          echo "pr_body<<${eof}"
           if [ -f pr_body.md ]; then
             cat pr_body.md
           else
@@ -436,12 +493,12 @@ runs:
           echo "Opened automatically for review. **Never merge without verifying the fix.**"
           echo ""
           echo "$marker"
-          echo "GHAFBEOF"
+          echo "$eof"
         } >> "$GITHUB_OUTPUT"
         rm -f pr_body.md
 
         {
-          echo "commit_message<<GHAFCEOF"
+          echo "commit_message<<${eof}"
           if [ -f commit_message.txt ]; then
             cat commit_message.txt
           else
@@ -451,7 +508,7 @@ runs:
             echo ""
             echo "Triggered by ${RUN_URL}"
           fi
-          echo "GHAFCEOF"
+          echo "$eof"
         } >> "$GITHUB_OUTPUT"
         rm -f commit_message.txt
 
