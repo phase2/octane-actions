@@ -59,10 +59,13 @@ the prompt.
 
 ### Two independent guards stop a runaway run
 
-- **Change-set sanity**: refuses to open a PR if more than `max_changed_files`
-  files changed, if the workspace is clean despite the agent reporting changes,
-  or if generated `.github/workflows/` changed with no corresponding
-  `actions/src|includes` change.
+- **Change-set sanity**: refuses to open a PR if the workspace was already dirty
+  before the agent ran, if more than `max_changed_files` files changed, if the
+  workspace is clean despite the agent reporting changes, or if generated
+  `.github/workflows/` changed with no corresponding `actions/src|includes`
+  change. The file count uses `git status --porcelain -uall`, because plain
+  porcelain collapses an untracked directory to a single line and a generated
+  project would otherwise score 1 against the limit.
 - **Fingerprint dedup**: closes a prior PR only on an exact fingerprint-marker
   match. An empty or missing fingerprint closes nothing, ever.
 
@@ -74,7 +77,17 @@ declare it in `action.yml`, so callers cannot read it. This action uses
 
 ## Usage
 
+The action reasons about, and edits, a checked-out working tree, so the calling
+job must check the repository out first. It refuses to open a PR if that tree is
+already dirty when the agent starts.
+
 ```yaml
+- name: Check out the repo
+  uses: actions/checkout@v6
+  with:
+    # Full history so create-pull-request can branch cleanly.
+    fetch-depth: 0
+
 - name: Generate GitHub App token
   id: app-token
   uses: actions/create-github-app-token@v3
