@@ -27,4 +27,64 @@ runs:
     - name: Find pod
       id: find-pod
       shell: bash
-      run: echo "pod-status=$(${{ github.action_path }}/find-pod.sh ${{ inputs.release_name }})" >> $GITHUB_OUTPUT
+      env:
+        RELEASE_NAME_INPUT: ${{ inputs.release_name }}
+      run: |
+        # This step used to be a one-liner:
+        #
+        #   echo "pod-status=$(${{ github.action_path }}/find-pod.sh ...)" >> $GITHUB_OUTPUT
+        #
+        # It had two problems that combined into a silent wrong answer.
+        #
+        # 1. When the CALLING job declares a `container:`, github.action_path can
+        #    expand to the runner's HOST path (/opt/actions-runner/_work/_actions/...)
+        #    while the job only sees the work directory mounted at /__w. The script
+        #    is present, but not where the step looks for it.
+        #
+        # 2. The call sat inside a $( ) feeding echo, so a missing script produced an
+        #    empty substitution, echo still succeeded, and the step exited 0. The
+        #    action then set NO output at all, and every consumer gating on
+        #    `pod-status != 'true'` silently took the "no pod" branch forever.
+        #
+        # So: locate the script defensively, keep the exit code visible, and always
+        # emit an explicit true/false. A probe that could not run is reported as
+        # false with a warning rather than as nothing, which preserves the previous
+        # fail-open behaviour for the job graph while ending the silence.
+        set -uo pipefail
+
+        actionDir="${GITHUB_ACTION_PATH}"
+        if [ ! -f "${actionDir}/find-pod.sh" ] && [[ "${actionDir}" == */_actions/* ]]; then
+          # Container jobs mount the runner work directory at /__w. Key off
+          # "_actions/" rather than the work directory name, so this holds for both
+          # self-hosted (/opt/actions-runner/_work/_actions/...) and GitHub-hosted
+          # (/home/runner/work/_actions/...) layouts, and is a no-op if the path is
+          # already the container one.
+          containerDir="/__w/_actions/${actionDir#*/_actions/}"
+          if [ -f "${containerDir}/find-pod.sh" ]; then
+            echo "Resolved action path for container job: ${containerDir}"
+            actionDir="${containerDir}"
+          fi
+        fi
+
+        if [ ! -f "${actionDir}/find-pod.sh" ]; then
+          echo "::warning::detect-pod could not locate find-pod.sh (tried ${GITHUB_ACTION_PATH} and the /__w container mount). Reporting pod-status=false."
+          echo "pod-status=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        set +e
+        podStatus="$(bash "${actionDir}/find-pod.sh" ${RELEASE_NAME_INPUT} 2>&1)"
+        rc=$?
+        set -e
+
+        if [ "${rc}" -ne 0 ]; then
+          echo "::warning::detect-pod probe exited ${rc}: ${podStatus}. Reporting pod-status=false."
+          echo "pod-status=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        if [ "${podStatus}" == "true" ]; then
+          echo "pod-status=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "pod-status=false" >> "$GITHUB_OUTPUT"
+        fi
