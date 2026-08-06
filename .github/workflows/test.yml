@@ -177,13 +177,13 @@ jobs:
       POD_RELEASE_NAME: main
     steps:
       - name: Find Devcloud pod
-        uses: phase2/octane-actions/actions/detect-pod@main
+        uses: phase2/octane-actions/actions/detect-pod@issue/NT-detect-pod-container-path
         id: detect-pod
         with:
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
           release_name: ${{ env.POD_RELEASE_NAME }}
       - name: Probe a release that has no pod
-        uses: phase2/octane-actions/actions/detect-pod@main
+        uses: phase2/octane-actions/actions/detect-pod@issue/NT-detect-pod-container-path
         id: detect-no-pod
         with:
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
