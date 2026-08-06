@@ -5,6 +5,8 @@ on:
     branches:
       - develop
       - renovate/**
+      # TEMPORARY: red/green proof for PR #62. Reverted before merge.
+      - issue/NT-detect-pod-container-path
   # `uses:` cannot take an expression, so every job below is pinned to a fixed
   # ref and this harness can only ever exercise that ref. To validate a change
   # before it is merged, push the branch, temporarily repoint the relevant
