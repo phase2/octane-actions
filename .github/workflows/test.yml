@@ -5,6 +5,11 @@ on:
     branches:
       - develop
       - renovate/**
+  # `uses:` cannot take an expression, so the jobs below are pinned to @develop
+  # and this harness only ever exercises that ref. To validate a fix before it
+  # is merged, push the branch and temporarily repoint the relevant `uses:` at
+  # it, then dispatch this workflow.
+  workflow_dispatch:
 
 defaults:
   run:
@@ -137,6 +142,58 @@ jobs:
           echo "Pod status: ${{ steps.detect-pod.outputs.pod-status }}"
           if [ "${{ steps.detect-pod.outputs.pod-status }}" != "true" ]; then
             echo "ERROR finding pod for namespace: $GENERATOR_NAMESPACE release: $POD_RELEASE_NAME"
+            result=1
+          fi
+          exit $result
+
+  # Same assertions as test-detect-pod, but from a container: job on the runner
+  # and image every Octane consumer actually uses. Path resolution differs
+  # between the two (see actions/detect-pod/action.yml), so the ubuntu-latest
+  # job above cannot catch a container-only regression -- which is how the
+  # silent-failure bug in issue #61 survived.
+  test-detect-pod-container:
+    name: Test detect-pod (container job)
+    runs-on: self-hosted
+    container:
+      image: ghcr.io/phase2/docker-cli:php8.3
+      # Default actions must run as user 1000
+      options: --user 1000
+    needs: [changes]
+    if: ${{ needs.changes.outputs.detect-pod == 'true' }}
+    env:
+      # Check if Phase2 demo project has a pod for main branch.
+      GENERATOR_PROJECT_NAME: demo
+      GENERATOR_NAMESPACE: demo
+      POD_RELEASE_NAME: main
+    steps:
+      - name: Find Devcloud pod
+        uses: phase2/octane-actions/actions/detect-pod@develop
+        id: detect-pod
+        with:
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+          release_name: ${{ env.POD_RELEASE_NAME }}
+      - name: Probe a release that has no pod
+        uses: phase2/octane-actions/actions/detect-pod@develop
+        id: detect-no-pod
+        with:
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+          release_name: no-such-release
+      - name: Validate pod status
+        env:
+          POD_STATUS: ${{ steps.detect-pod.outputs.pod-status }}
+          NO_POD_STATUS: ${{ steps.detect-no-pod.outputs.pod-status }}
+        run: |
+          result=0
+          echo "Pod status: '$POD_STATUS'"
+          if [ "$POD_STATUS" != "true" ]; then
+            echo "ERROR finding pod for namespace: $GENERATOR_NAMESPACE release: $POD_RELEASE_NAME"
+            result=1
+          fi
+          # An absent pod must report an explicit "false". Empty means the probe
+          # never ran, which consumers cannot distinguish from "no pod".
+          echo "No-pod status: '$NO_POD_STATUS'"
+          if [ "$NO_POD_STATUS" != "false" ]; then
+            echo "ERROR expected an explicit 'false' for a missing pod, got '$NO_POD_STATUS'"
             result=1
           fi
           exit $result
