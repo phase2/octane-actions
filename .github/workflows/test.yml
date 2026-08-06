@@ -5,10 +5,10 @@ on:
     branches:
       - develop
       - renovate/**
-  # `uses:` cannot take an expression, so the jobs below are pinned to @develop
-  # and this harness only ever exercises that ref. To validate a fix before it
-  # is merged, push the branch and temporarily repoint the relevant `uses:` at
-  # it, then dispatch this workflow.
+  # `uses:` cannot take an expression, so every job below is pinned to a fixed
+  # ref and this harness can only ever exercise that ref. To validate a change
+  # before it is merged, push the branch, temporarily repoint the relevant
+  # `uses:` at it, and dispatch this workflow.
   workflow_dispatch:
 
 defaults:
@@ -151,6 +151,10 @@ jobs:
   # between the two (see actions/detect-pod/action.yml), so the ubuntu-latest
   # job above cannot catch a container-only regression -- which is how the
   # silent-failure bug in issue #61 survived.
+  #
+  # Pinned to @main, not @develop like the jobs above: every consumer references
+  # @main, and nothing has merged into develop since #35, so a @develop pin here
+  # would assert against code no project actually runs.
   test-detect-pod-container:
     name: Test detect-pod (container job)
     runs-on: self-hosted
@@ -167,13 +171,13 @@ jobs:
       POD_RELEASE_NAME: main
     steps:
       - name: Find Devcloud pod
-        uses: phase2/octane-actions/actions/detect-pod@develop
+        uses: phase2/octane-actions/actions/detect-pod@main
         id: detect-pod
         with:
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
           release_name: ${{ env.POD_RELEASE_NAME }}
       - name: Probe a release that has no pod
-        uses: phase2/octane-actions/actions/detect-pod@develop
+        uses: phase2/octane-actions/actions/detect-pod@main
         id: detect-no-pod
         with:
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
