@@ -146,22 +146,26 @@ jobs:
           fi
           exit $result
 
-  # Same assertions as test-detect-pod, but from a container: job on the runner
-  # and image every Octane consumer actually uses. Path resolution differs
-  # between the two (see actions/detect-pod/action.yml), so the ubuntu-latest
-  # job above cannot catch a container-only regression -- which is how the
-  # silent-failure bug in issue #61 survived.
+  # Same assertions as test-detect-pod, but from a container: job, on the image
+  # every Octane consumer actually uses. A container job sees the runner work
+  # directory mounted at /__w rather than at its host path, and that is the
+  # whole of issue #61 (see actions/detect-pod/action.yml), so the plain
+  # ubuntu-latest job above structurally cannot catch it.
+  #
+  # ubuntu-latest rather than self-hosted: this repo is public and has no
+  # self-hosted runners. The /__w mount behaves the same on a GitHub-hosted
+  # container job, which is all this test needs. --user 1000 is omitted for a
+  # related reason -- the hosted runner owns _temp as a different uid, so
+  # GITHUB_OUTPUT would not be writable.
   #
   # Pinned to @main, not @develop like the jobs above: every consumer references
   # @main, and nothing has merged into develop since #35, so a @develop pin here
   # would assert against code no project actually runs.
   test-detect-pod-container:
     name: Test detect-pod (container job)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     container:
       image: ghcr.io/phase2/docker-cli:php8.3
-      # Default actions must run as user 1000
-      options: --user 1000
     needs: [changes]
     if: ${{ needs.changes.outputs.detect-pod == 'true' }}
     env:
