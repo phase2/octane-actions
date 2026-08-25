@@ -37,13 +37,20 @@ not run a blanket `composer update vendor/package`.
 
 Patch level only
 ```bash
-composer update vendor/package --patch-only --with-dependencies
+composer update vendor/package --patch-only --with-dependencies --minimal-changes
 ```
 
 Specific version request
 ```bash
-composer update vendor/package --with vendor/package:1.0.1 --with-dependencies
+composer update vendor/package --with vendor/package:1.0.1 --with-dependencies --minimal-changes
 ```
+
+`--minimal-changes` (`-m`) is required and must not be dropped. Drupal projects require
+`drupal/core-recommended` rather than `drupal/core`, so `drupal/core` is not a root
+requirement. Because `--with-dependencies` updates everything except root requirements,
+without `-m` it walks into core's entire dependency tree and bumps unrelated packages
+(symfony/*, guzzle, pear/archive_tar) that have no advisory. Those belong in a planned
+core/dependency update pass, not a security PR.
 
 When Drupal core updates are required, ensure all related core packages are updated
 ```bash
@@ -128,6 +135,7 @@ Save to `pr_body.md` with:
 - Breaking changes from changelogs (if any)
 - Conflicts requiring manual resolution (if any)
 - Transitive dependency vulnerabilities that were NOT updated. List the vulnerable package and which direct dependency should be updated upstream to resolve it.
+- Any other package whose version changed in `composer.lock` without having an advisory. Compare the lock against the base branch and list every remaining difference, so reviewers do not have to diff the lock by hand. If there are none, say so.
 
 ### 8. Create Commit Message
 Save to `commit_message.txt` with a concise commit message following this format:
