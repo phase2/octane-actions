@@ -45,16 +45,27 @@ Specific version request
 composer update vendor/package --with vendor/package:1.0.1 --with-dependencies --minimal-changes
 ```
 
-`--minimal-changes` (`-m`) is required and must not be dropped. Drupal projects require
-`drupal/core-recommended` rather than `drupal/core`, so `drupal/core` is not a root
-requirement. Because `--with-dependencies` updates everything except root requirements,
-without `-m` it walks into core's entire dependency tree and bumps unrelated packages
-(symfony/*, guzzle, pear/archive_tar) that have no advisory. Those belong in a planned
-core/dependency update pass, not a security PR.
+`--minimal-changes` (`-m`) is required on the two commands above and must not be dropped
+from them. Drupal projects require `drupal/core-recommended` rather than `drupal/core`, so
+`drupal/core` is not a root requirement. Because `--with-dependencies` updates everything
+except root requirements, without `-m` these two commands walk into core's entire
+dependency tree and bump unrelated packages (symfony/*, guzzle, pear/archive_tar) that have
+no advisory. Those belong in a planned core/dependency update pass, not a security PR.
 
 When Drupal core updates are required, ensure all related core packages are updated
 ```bash
 composer update "drupal/core-*" --with-all-dependencies
+```
+
+The core command above deliberately omits `-m`, and the rule stated for the two commands
+above does not apply to it. A core update legitimately carries its dependency tree, and
+because `drupal/core` is not a root requirement, no core bump is ever
+constraint-necessary — adding `-m` here reduces the command to a no-op
+("Nothing to modify in lock file"). When an advisory names a specific core release, update
+to that release explicitly instead, which applies the fix while keeping transitive churn
+minimal:
+```bash
+composer update drupal/core --with drupal/core:<fixed-version> --with-all-dependencies --minimal-changes
 ```
 
 **Reminder**: Never run `composer update` on a package unless you have confirmed it exists in composer.json.
@@ -81,7 +92,7 @@ For any transitive vulnerability that persists:
    ```bash
    composer update vendor/vulnerable-package
    ```
-   This will update it to the latest version allowed by the parent package's constraints without modifying composer.json.
+   This will update it to the latest version allowed by the parent package's constraints without modifying composer.json. `-m` is not needed here: it only affects partial updates that use `-w`/`-W`.
 
 4. If the update succeeds and resolves the vulnerability, include it in the PR description.
 
@@ -135,7 +146,7 @@ Save to `pr_body.md` with:
 - Breaking changes from changelogs (if any)
 - Conflicts requiring manual resolution (if any)
 - Transitive dependency vulnerabilities that were NOT updated. List the vulnerable package and which direct dependency should be updated upstream to resolve it.
-- Any other package whose version changed in `composer.lock` without having an advisory. Compare the lock against the base branch and list every remaining difference, so reviewers do not have to diff the lock by hand. If there are none, say so.
+- Any other package whose version changed in `composer.lock` without having an advisory. Run `git diff -- composer.lock` and list every remaining difference, so reviewers do not have to diff the lock by hand. If there are none, say so. Compare the working tree against HEAD rather than a remote ref: nothing is staged or committed at this point, so HEAD is still the base branch, and fetching the base ref fails in checkouts that use `persist-credentials: false`.
 
 ### 8. Create Commit Message
 Save to `commit_message.txt` with a concise commit message following this format:
