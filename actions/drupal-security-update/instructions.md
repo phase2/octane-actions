@@ -45,28 +45,24 @@ Specific version request
 composer update vendor/package --with vendor/package:1.0.1 --with-dependencies --minimal-changes
 ```
 
-`--minimal-changes` (`-m`) is required on the two commands above and must not be dropped
-from them. Drupal projects require `drupal/core-recommended` rather than `drupal/core`, so
+`--minimal-changes` (`-m`) is required on every update command in this step and must not be
+dropped. Drupal projects require `drupal/core-recommended` rather than `drupal/core`, so
 `drupal/core` is not a root requirement. Because `--with-dependencies` updates everything
-except root requirements, without `-m` these two commands walk into core's entire
-dependency tree and bump unrelated packages (symfony/*, guzzle, pear/archive_tar) that have
-no advisory. Those belong in a planned core/dependency update pass, not a security PR.
+except root requirements, without `-m` these commands walk into core's entire dependency
+tree and bump unrelated packages (symfony/*, guzzle, pear/archive_tar) that have no
+advisory. Those belong in a planned core/dependency update pass, not a security PR.
 
 When Drupal core updates are required, ensure all related core packages are updated
 ```bash
-composer update "drupal/core-*" --with-all-dependencies
+composer update "drupal/core-*" --with-all-dependencies --minimal-changes
 ```
 
-The core command above deliberately omits `-m`, and the rule stated for the two commands
-above does not apply to it. A core update legitimately carries its dependency tree, and
-because `drupal/core` is not a root requirement, no core bump is ever
-constraint-necessary — adding `-m` here reduces the command to a no-op
-("Nothing to modify in lock file"). When an advisory names a specific core release, update
-to that release explicitly instead, which applies the fix while keeping transitive churn
-minimal:
-```bash
-composer update drupal/core --with drupal/core:<fixed-version> --with-all-dependencies --minimal-changes
-```
+`-m` performs only the changes needed to satisfy constraints. For a package that is not a
+root requirement, the advisory by itself is not a constraint — what makes the upgrade
+necessary is a conflict against the vulnerable range, which `roave/security-advisories`
+supplies when it is installed. So if a targeted package does not move, name the fixed
+version explicitly with the "Specific version request" form above rather than dropping
+`-m`. The re-audit in step 4 will catch a package that failed to move.
 
 **Reminder**: Never run `composer update` on a package unless you have confirmed it exists in composer.json.
 
