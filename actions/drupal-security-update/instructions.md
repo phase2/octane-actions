@@ -52,17 +52,25 @@ except root requirements, without `-m` these commands walk into core's entire de
 tree and bump unrelated packages (symfony/*, guzzle, pear/archive_tar) that have no
 advisory. Those belong in a planned core/dependency update pass, not a security PR.
 
-When Drupal core updates are required, ensure all related core packages are updated
+When Drupal core updates are required, ensure all related core packages are updated. List
+them by name; do **not** use a `"drupal/core-*"` pattern. Take the names from
+`composer.json` — commonly:
 ```bash
-composer update "drupal/core-*" --with-all-dependencies --minimal-changes
+composer update drupal/core-recommended drupal/core-composer-scaffold drupal/core-project-message drupal/core-dev --with-all-dependencies --minimal-changes
 ```
+Include only the ones `composer.json` actually requires, plus `drupal/core` itself if it is
+required directly. Naming `drupal/core-recommended` is enough to carry `drupal/core` with
+it. Do not add `--patch-only` here: the fixed core releases require newer minor versions of
+their own dependencies, which `--patch-only` forbids, making the update unresolvable.
 
-`-m` performs only the changes needed to satisfy constraints. For a package that is not a
-root requirement, the advisory by itself is not a constraint — what makes the upgrade
-necessary is a conflict against the vulnerable range, which `roave/security-advisories`
-supplies when it is installed. So if a targeted package does not move, name the fixed
-version explicitly with the "Specific version request" form above rather than dropping
-`-m`. The re-audit in step 4 will catch a package that failed to move.
+`-m` performs only the changes needed to satisfy constraints, with one exception: packages
+named explicitly in the command are always eligible to move. A pattern like
+`"drupal/core-*"` does **not** count as naming them — `-m` treats pattern-matched packages
+as transitive and refuses to move them, so the pattern form reports "Nothing to modify in
+lock file" and silently leaves core at the vulnerable version. That is why the core
+packages must be listed individually. If a targeted package still does not move, name the
+fixed version with the "Specific version request" form above rather than dropping `-m`; the
+re-audit in step 4 will catch a package that failed to move.
 
 **Reminder**: Never run `composer update` on a package unless you have confirmed it exists in composer.json.
 
