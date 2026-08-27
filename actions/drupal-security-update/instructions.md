@@ -63,6 +63,11 @@ required directly. Naming `drupal/core-recommended` is enough to carry `drupal/c
 it. Do not add `--patch-only` here: the fixed core releases require newer minor versions of
 their own dependencies, which `--patch-only` forbids, making the update unresolvable.
 
+If a named package is not present, Composer prints
+`Package "vendor/name" listed for update is not locked.` and carries on with the rest. That
+line is informational, not a failure — do not abort or treat the update as unsuccessful
+because of it.
+
 `-m` performs only the changes needed to satisfy constraints, with one exception: packages
 named explicitly in the command are always eligible to move. A pattern like
 `"drupal/core-*"` does **not** count as naming them — `-m` treats pattern-matched packages
