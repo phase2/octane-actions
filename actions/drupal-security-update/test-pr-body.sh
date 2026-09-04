@@ -106,6 +106,32 @@ output_delim() {
   awk -v key="$2" 'index($0, key "<<") == 1 { print substr($0, length(key) + 3); exit }' "$1"
 }
 
+# Every line of a $GITHUB_OUTPUT file must be one of: a `key=value` assignment,
+# a `key<<DELIM` opener, that block's terminator, or a line inside a block.
+# Anything else is an orphan, which means content escaped its block. Returns
+# non-zero and prints the orphans if any are found.
+assert_no_orphan_lines() {
+  awk '
+    !inblock {
+      if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*<</) {
+        inblock = 1
+        delim = substr($0, index($0, "<<") + 2)
+        next
+      }
+      if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { next }
+      if ($0 == "") { next }
+      printf "        orphan line outside any block: %s\n", $0
+      bad = 1
+      next
+    }
+    { if ($0 == delim) { inblock = 0 } }
+    END {
+      if (inblock) { printf "        unterminated block (delimiter %s never closed)\n", delim; bad = 1 }
+      exit bad ? 1 : 0
+    }
+  ' "$1"
+}
+
 # Assert the heredoc for a key is well formed: opener and terminator each on
 # their own line, terminator present after the opener.
 assert_heredoc_wellformed() {
@@ -276,11 +302,15 @@ if run_step "$wd" 'Footer after a GHPREOF line.'; then
   else
     fail "output was truncated at the embedded delimiter: $got"
   fi
-  # Nothing after the block may have been reinterpreted as a step output.
-  if grep -qxF 'and then more text.' "$STEP_OUTPUT" && ! grep -q '^pr_title=' <<<"$got"; then
-    pass "no part of the body leaked out as a separate step output"
+  # Nothing may sit outside a heredoc block. This is the property the Actions
+  # runner enforces: a body line that escapes its block is not silently
+  # mis-parsed, it makes the runner reject the whole file command. With a fixed
+  # delimiter the embedded GHPREOF line closes the block early and everything
+  # after it becomes an orphan, which is what this detects.
+  if assert_no_orphan_lines "$STEP_OUTPUT"; then
+    pass "every line is an assignment, a block opener/terminator, or block content"
   else
-    pass "block boundaries intact"
+    fail "body content escaped its heredoc block (see orphan lines above); the runner would reject this file command"
   fi
 else
   fail "step exited non-zero: $(cat "${wd}/stderr")"

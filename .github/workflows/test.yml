@@ -20,7 +20,6 @@ jobs:
       add-pr-url: ${{ steps.filter.outputs.add-pr-url }}
       load-env: ${{ steps.filter.outputs.load-env }}
       detect-pod: ${{ steps.filter.outputs.detect-pod }}
-      drupal-security-update: ${{ steps.filter.outputs.drupal-security-update }}
     steps:
       - name: Dump GitHub context
         env:
@@ -42,9 +41,6 @@ jobs:
               - '.github/workflows/test.yml'
             detect-pod:
               - 'actions/detect-pod/**'
-              - '.github/workflows/test.yml'
-            drupal-security-update:
-              - 'actions/drupal-security-update/**'
               - '.github/workflows/test.yml'
 
   test-add-pr-url:
@@ -117,27 +113,6 @@ jobs:
             fi
           fi
           exit $result
-
-  test-drupal-security-update:
-    name: Test drupal-security-update PR body assembly
-    runs-on: ubuntu-latest
-    needs: [changes]
-    if: ${{ needs.changes.outputs.drupal-security-update == 'true' }}
-    # This job extracts a shell block out of action.yml and executes it, so it
-    # is the one job here that should hold no more than it needs.
-    permissions:
-      contents: read
-    steps:
-      - name: Check out the repo
-        uses: actions/checkout@v4
-        with:
-          # The test evals code read from the checked-out tree; it needs no git
-          # operations afterwards, so do not leave a token in .git/config.
-          persist-credentials: false
-      # Static test: extracts the "Prepare PR metadata" run: block out of
-      # action.yml and exercises it. No Composer, no Claude, no credentials.
-      - name: Test PR body assembly
-        run: bash actions/drupal-security-update/test-pr-body.sh
 
   test-detect-pod:
     name: Test detect-pod

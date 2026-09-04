@@ -175,6 +175,14 @@ bash actions/drupal-security-update/test-pr-body.sh
 Needs only `bash` and `ruby`. No network, no credentials, no side effects
 outside a temp directory.
 
+It runs in CI from `.github/workflows/static-tests.yml`, on every pull request
+and on pushes to `main`. That is a separate workflow from `test.yml` on
+purpose: `test.yml`'s jobs consume `phase2/octane-actions/actions/*@develop` in
+order to exercise the published ref, so they fire only on pushes to `develop`
+and `renovate/**`. A test that reads the checked-out tree would never run
+there, because `develop` has been dormant since 2024 while pull requests target
+`main`.
+
 ## Requirements
 
 - PHP and Composer must be installed in the runner environment

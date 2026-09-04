@@ -1,0 +1,44 @@
+name: 'Static Tests'
+
+# Hermetic tests that read the checked-out tree: no cluster, no secrets, no
+# published action refs. They belong on a different trigger from test.yml,
+# whose jobs deliberately consume `phase2/octane-actions/actions/*@develop` in
+# order to exercise the published ref and therefore only fire on pushes to
+# `develop` and `renovate/**`.
+#
+# That distinction matters: a static test wired into test.yml would never run,
+# because `develop` is not part of the current flow (last commit 2024-06-14,
+# with main many commits ahead) and every pull request targets `main`.
+#
+# Deliberately NOT path-filtered. The whole job takes a couple of seconds and
+# needs nothing privileged, and an unfiltered workflow reports a real
+# conclusion on every pull request instead of silently not running, which is
+# what you want if any of these ever becomes a required check.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+
+  drupal-security-update-pr-body:
+    name: drupal-security-update PR body assembly
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+        with:
+          # This test executes a shell block it reads out of action.yml, so
+          # leave no token in .git/config for that code to find.
+          persist-credentials: false
+      - name: Test PR body assembly
+        run: bash actions/drupal-security-update/test-pr-body.sh
