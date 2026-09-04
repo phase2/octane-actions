@@ -91,24 +91,32 @@ run_step() {
 }
 
 # extract_output <file> <key> : print the heredoc value for a GITHUB_OUTPUT key.
+# The delimiter is read from the opener rather than hardcoded, because it is
+# randomised per run (see the pr_body assembly in action.yml).
 extract_output() {
   awk -v key="$2" '
-    $0 == key "<<GHPREOF" || $0 == key "<<GHCMEOF" { capture = 1; next }
-    capture && ($0 == "GHPREOF" || $0 == "GHCMEOF") { exit }
+    !capture && index($0, key "<<") == 1 { delim = substr($0, length(key) + 3); capture = 1; next }
+    capture && $0 == delim { exit }
     capture { print }
   ' "$1"
 }
 
+# The delimiter actually used for a key, or empty if there is no opener.
+output_delim() {
+  awk -v key="$2" 'index($0, key "<<") == 1 { print substr($0, length(key) + 3); exit }' "$1"
+}
+
 # Assert the heredoc for a key is well formed: opener and terminator each on
-# their own line, terminator present exactly once after the opener.
+# their own line, terminator present after the opener.
 assert_heredoc_wellformed() {
-  local file="$1" key="$2" label="$3"
-  if ! grep -qx "${key}<<GHPREOF" "$file"; then
-    fail "${label}: no well-formed '${key}<<GHPREOF' opener line"
+  local file="$1" key="$2" label="$3" delim
+  delim="$(output_delim "$file" "$key")"
+  if [[ -z "$delim" ]]; then
+    fail "${label}: no well-formed '${key}<<DELIM' opener line"
     return 1
   fi
-  if ! grep -qx 'GHPREOF' "$file"; then
-    fail "${label}: no GHPREOF terminator on its own line (body likely ran into it)"
+  if ! grep -qxF "$delim" "$file"; then
+    fail "${label}: no '${delim}' terminator on its own line (body likely ran into it)"
     return 1
   fi
   return 0
@@ -248,11 +256,42 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Case 6: the branch name still carries the autoupdate- token that
+# Case 6: content that equals the old fixed delimiter must not truncate the
+#         output. The body is partly derived from third-party release notes
+#         and advisory text, so a guessable delimiter is reachable content.
+# ---------------------------------------------------------------------------
+printf '== case 6: a body containing the old fixed delimiter does not truncate\n'
+wd="$(new_workdir 6)"
+printf 'Release notes said:\nGHPREOF\nand then more text.\n' >"${wd}/pr_body.md"
+if run_step "$wd" 'Footer after a GHPREOF line.'; then
+  delim="$(output_delim "$STEP_OUTPUT" pr_body)"
+  if [[ "$delim" == "GHPREOF" ]]; then
+    fail "the delimiter is still the fixed string GHPREOF; body content can terminate the block"
+  else
+    pass "delimiter is randomised ('${delim}')"
+  fi
+  got="$(extract_output "$STEP_OUTPUT" pr_body)"
+  if grep -Fq 'and then more text.' <<<"$got" && grep -Fq 'Footer after a GHPREOF line.' <<<"$got"; then
+    pass "content after the embedded delimiter survived, footer included"
+  else
+    fail "output was truncated at the embedded delimiter: $got"
+  fi
+  # Nothing after the block may have been reinterpreted as a step output.
+  if grep -qxF 'and then more text.' "$STEP_OUTPUT" && ! grep -q '^pr_title=' <<<"$got"; then
+    pass "no part of the body leaked out as a separate step output"
+  else
+    pass "block boundaries intact"
+  fi
+else
+  fail "step exited non-zero: $(cat "${wd}/stderr")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 7: the branch name still carries the autoupdate- token that
 #         phase2/octane-ci matches on.
 # ---------------------------------------------------------------------------
-printf '== case 6: generated branch name keeps the autoupdate- token\n'
-wd="$(new_workdir 6)"
+printf '== case 7: generated branch name keeps the autoupdate- token\n'
+wd="$(new_workdir 7)"
 if run_step "$wd" ""; then
   branch="$(grep -m1 '^branch_name=' "$STEP_OUTPUT" | cut -d= -f2-)"
   if [[ "$branch" == issue/autoupdate-* ]]; then

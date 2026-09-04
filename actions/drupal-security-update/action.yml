@@ -245,10 +245,16 @@ runs:
           } >>"$prBody"
         fi
 
+        # Random heredoc delimiter, not a fixed one. The body is partly
+        # derived from third-party package release notes and advisory text, so
+        # a guessable delimiter is content an upstream package could contain:
+        # a line equal to it would terminate the block early and the rest
+        # would be parsed as separate step outputs.
+        prDelim="GHPREOF_$(openssl rand -hex 16 2>/dev/null || date +%s%N)"
         {
-          echo "pr_body<<GHPREOF"
+          echo "pr_body<<${prDelim}"
           cat "$prBody"
-          echo "GHPREOF"
+          echo "${prDelim}"
         } >> $GITHUB_OUTPUT
         rm -f "$prBody"
 
