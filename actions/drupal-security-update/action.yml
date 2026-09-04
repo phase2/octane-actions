@@ -27,7 +27,12 @@ inputs:
     required: false
     default: 'false'
   branch_prefix:
-    description: 'Prefix for the created branch name (e.g., "issue/" creates "issue/autoupdate-YYYYMMDDHHMM")'
+    description: >-
+      Prefix for the created branch name (e.g., "issue/" creates
+      "issue/autoupdate-YYYYMMDDHHMM"). The prefix is safe to change, but the
+      "autoupdate-" segment is a downstream contract: phase2/octane-ci matches
+      it to decide whether to guard a build against un-exported Drupal config.
+      Renaming that segment disables that guard with no error anywhere.
     required: false
     default: 'issue/'
   pr_reviewers:
@@ -58,6 +63,13 @@ inputs:
     description: 'Seconds to wait and retry if a fixed package version is not yet published'
     required: false
     default: '300'
+  pr_body_footer:
+    description: >-
+      Markdown appended verbatim to the end of the generated PR description.
+      Callers use this to explain caller-specific CI behaviour that applies to
+      the branches this action creates. Leave empty to append nothing.
+    required: false
+    default: ''
 
 outputs:
   has_vulnerabilities:
@@ -189,6 +201,11 @@ runs:
       id: prepare-pr
       shell: bash
       working-directory: ${{ inputs.working_directory }}
+      env:
+        # Read the footer through the environment rather than interpolating the
+        # input into the script, so multi-line markdown and shell
+        # metacharacters in a caller-supplied value cannot alter this step.
+        PR_BODY_FOOTER: ${{ inputs.pr_body_footer }}
       run: |
         # Generate branch name with prefix
         BRANCH_NAME="${{ inputs.branch_prefix }}autoupdate-$(date +%Y%m%d%H%M)"
@@ -198,23 +215,42 @@ runs:
         PR_TITLE="Security: Drupal security updates - $(date +%Y-%m-%d)"
         echo "pr_title=$PR_TITLE" >> $GITHUB_OUTPUT
 
+        # Assemble the PR body in a scratch file outside the repository, so it
+        # cannot be picked up by create-pull-request and committed.
+        prBody="${RUNNER_TEMP:-/tmp}/octane-pr-body.md"
         # Read PR body from Claude's output (if exists) then remove it so it's not committed
         if [ -f pr_body.md ]; then
-          {
-            echo "pr_body<<GHPREOF"
-            cat pr_body.md
-            echo "GHPREOF"
-          } >> $GITHUB_OUTPUT
+          cp pr_body.md "$prBody"
           rm pr_body.md
         else
           {
-            echo "pr_body<<GHPREOF"
             echo "Automated security update for Drupal Composer dependencies."
             echo ""
             echo "This PR addresses ${{ steps.audit.outputs.vulnerability_count }} security vulnerabilities found by \`composer audit\`."
-            echo "GHPREOF"
-          } >> $GITHUB_OUTPUT
+          } >"$prBody"
         fi
+
+        # Guarantee a trailing newline. Without one, a pr_body.md that does not
+        # end in a newline would run into the footer below, or into the heredoc
+        # terminator, and corrupt the step output.
+        if [ -s "$prBody" ] && [ -n "$(tail -c 1 "$prBody")" ]; then
+          echo "" >>"$prBody"
+        fi
+
+        # Append the caller-supplied footer, if any. See the pr_body_footer input.
+        if [ -n "${PR_BODY_FOOTER}" ]; then
+          {
+            echo ""
+            printf '%s\n' "${PR_BODY_FOOTER}"
+          } >>"$prBody"
+        fi
+
+        {
+          echo "pr_body<<GHPREOF"
+          cat "$prBody"
+          echo "GHPREOF"
+        } >> $GITHUB_OUTPUT
+        rm -f "$prBody"
 
         # Read commit message from Claude's output (if exists) then remove it so it's not committed
         if [ -f commit_message.txt ]; then
