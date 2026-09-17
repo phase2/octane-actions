@@ -102,8 +102,21 @@ ruby -ryaml -e '
     end
   end
 
+  # A positive check on three known ids is an allowlist, not a guard: a NEW step
+  # wired to inputs.github_token and calling an Actions endpoint would pass it
+  # and 403 in production exactly as run 35185235459 did. Pin the whole set.
+  expected_writers = %w[create-pr dedup]
+  writers = steps.select { |st|
+    (st["with"] || {}).values.any? { |v| v.to_s.include?("inputs.github_token") }
+  }.map { |st| st["id"] }
+  unless writers.sort == expected_writers.sort
+    errors << "steps holding inputs.github_token are #{writers.inspect}, expected " \
+              "#{expected_writers.inspect}. A new step on the write token that reads " \
+              "the Actions API will 403; one moved off it stops working."
+  end
+
   abort errors.join("\n") unless errors.empty?
-' "$actionYml" && pass "reads use actions_read_token, create-pr keeps github_token" || fail "token split is broken (see above)"
+' "$actionYml" && pass "reads use actions_read_token; only create-pr and dedup hold the write token" || fail "token split is broken (see above)"
 
 # ---------------------------------------------------------------------------
 printf '== the notify step runs before anything that can fail\n'
@@ -135,25 +148,43 @@ ruby -ryaml -e '
   steps = y["runs"]["steps"]
   slack = steps.select { |s| (s["uses"] || "").include?("slack-github-action") }
   abort "expected 2 Slack steps, found #{slack.size}" unless slack.size == 2
+  # Match mention_prefix EXACTLY. The bare substring "outputs.mention" also
+  # matches "outputs.mention_prefix", so it would pass on a payload switched to
+  # the unprefixed value, which renders with no space before the message.
+  token = "steps.notify.outputs.mention_prefix"
   slack.each do |s|
     payload = (s["with"] || {})["payload"].to_s
     name    = s["name"]
-    unless payload.include?("steps.notify.outputs.mention")
-      abort "#{name.inspect} payload does not interpolate the normalised mention"
+
+    # The top-level text: is the least-indented one. Finding "the first text:"
+    # instead breaks the moment text: is written below blocks:, and silently
+    # inspects a header block text: rather than the fallback.
+    text_lines = payload.lines.select { |l| l =~ /^(\s*)text:\s*"/ }
+    abort "#{name.inspect} payload has no text: scalar" if text_lines.empty?
+    indent = text_lines.map { |l| l[/^\s*/].length }.min
+    top    = text_lines.select { |l| l[/^\s*/].length == indent }
+    block  = text_lines - top
+
+    unless top.any? { |l| l.include?(token) }
+      abort "#{name.inspect} does not interpolate #{token} in its top-level " \
+            "text: fallback, which is the notification preview"
     end
     # Slack drives the notification from block content when blocks are present,
     # while text: supplies the preview. A mention in only one under-delivers.
-    text_line = payload.lines.find { |l| l =~ /^\s*text:\s*"/ }
-    abort "#{name.inspect} payload has no top-level text: fallback" unless text_line
-    unless text_line.include?("steps.notify.outputs.mention")
-      abort "#{name.inspect} has the mention in blocks but not in the text: fallback"
+    unless block.any? { |l| l.include?(token) }
+      abort "#{name.inspect} has the mention in text: but in no block; counting " \
+            "total occurrences would pass on two hits in text: alone"
     end
-    unless payload.scan("steps.notify.outputs.mention").size >= 2
-      abort "#{name.inspect} mentions the user only once; it must appear in both " \
-            "the text: fallback and a block"
+
+    # The gating that makes any of this reachable. A bare `if:` gets an implicit
+    # success(), so both notifiers skip on precisely the runs that need them.
+    cond = s["if"].to_s
+    unless cond.include?("!cancelled()")
+      abort "#{name.inspect} is gated on #{cond.inspect} with no !cancelled(); " \
+            "an implicit success() skips it after any earlier step fails"
     end
   end
-' "$actionYml" && pass "both notifications carry the mention in text: and in a block" || fail "Slack payload mention wiring is wrong (see above)"
+' "$actionYml" && pass "both notifications carry the mention in text: and a block, and survive a failure" || fail "Slack payload mention wiring is wrong (see above)"
 
 # ---------------------------------------------------------------------------
 # Extract the shipped notify run: block and make it runnable.
@@ -175,18 +206,27 @@ run_notify() {
   local raw="$1"
   OUT="${work}/out-$$-${RANDOM}"
   : >"$OUT"
-  GITHUB_OUTPUT="$OUT" RAW_MENTION="$raw" bash "${work}/notify.sh" \
+  # The runner executes `shell: bash` as `bash --noprofile --norc -eo pipefail`.
+  # Running it as plain bash leaves `-e` off, so a future edit that returns
+  # non-zero on some input would pass here and abort the step in production.
+  # notify is step 1 with no `if:`, so that abort skips EVERY later step,
+  # including both Slack notifiers. Match the runner exactly.
+  GITHUB_OUTPUT="$OUT" RAW_MENTION="$raw" \
+    bash --noprofile --norc -eo pipefail "${work}/notify.sh" \
     >"${OUT}.stdout" 2>"${OUT}.stderr"
   return $?
 }
 
 out_value() { grep -m1 "^$2=" "$1" | cut -d= -f2-; }
 
-# Every line must be a plain key=value assignment. Anything else means content
-# escaped into the file command, which is the injection this guards against.
+# Every line must assign one of the two keys this step is allowed to write.
+# An ALLOWLIST, not a shape test: the injection being guarded against is
+# `should_pr=true`, which is itself a well-formed key=value line, so a pattern
+# like '^[A-Za-z_][A-Za-z0-9_]*=' matches it and reports the file clean while
+# the injected output sits in it.
 assert_only_assignments() {
   local bad
-  bad="$(grep -vE '^[A-Za-z_][A-Za-z0-9_]*=' "$1" | grep -v '^$' || true)"
+  bad="$(grep -vE '^(mention|mention_prefix)=' "$1" | grep -v '^[[:space:]]*$' || true)"
   if [[ -n "$bad" ]]; then
     printf '        orphan line(s):\n%s\n' "$bad"
     return 1
@@ -274,6 +314,73 @@ if run_notify "$(printf '<@U1>%.0s' $(seq 1 200))"; then
     pass "mention bounded to ${len} characters"
   else
     fail "mention is ${len} characters; it is not bounded"
+  fi
+else
+  fail "step exited non-zero: $(cat "${OUT}.stderr")"
+fi
+
+# ---------------------------------------------------------------------------
+# The trim was the one line in this step no case exercised: deleting it left
+# the whole suite green.
+printf '== case 7: surrounding whitespace is trimmed\n'
+if run_notify '   <@U1>   '; then
+  if [[ "$(out_value "$OUT" mention)" == '<@U1>' ]]; then
+    pass "leading and trailing whitespace removed"
+  else
+    fail "mention is $(printf '%q' "$(out_value "$OUT" mention)"), expected <@U1>"
+  fi
+  if [[ "$(out_value "$OUT" mention_prefix)" == '<@U1> ' ]]; then
+    pass "mention_prefix carries exactly one trailing space"
+  else
+    fail "mention_prefix is $(printf '%q' "$(out_value "$OUT" mention_prefix)")"
+  fi
+else
+  fail "step exited non-zero: $(cat "${OUT}.stderr")"
+fi
+
+if run_notify '     '; then
+  if [[ -z "$(out_value "$OUT" mention)" && -z "$(out_value "$OUT" mention_prefix)" ]]; then
+    pass "an all-whitespace mention collapses to empty"
+  else
+    fail "whitespace-only mention produced $(printf '%q' "$(out_value "$OUT" mention_prefix)")"
+  fi
+else
+  fail "step exited non-zero: $(cat "${OUT}.stderr")"
+fi
+
+# ---------------------------------------------------------------------------
+# The payload interpolates this into a double-quoted YAML scalar, where a
+# backslash opens an escape sequence. An unknown escape is a hard parse error
+# in slack-github-action, and a parse error is NOT gated by slack_errors, so
+# both notifications are lost. Backslashes must survive as data, doubled.
+printf '== case 8: a backslash cannot break the payload, and is not lost\n'
+if run_notify 'Drupal\Core\Entity'; then
+  got="$(out_value "$OUT" mention)"
+  if [[ "$got" == 'Drupal\\Core\\Entity' ]]; then
+    pass "backslashes doubled, so the YAML scalar stays valid"
+  else
+    fail "expected doubled backslashes, got $(printf '%q' "$got")"
+  fi
+  if command -v ruby >/dev/null 2>&1; then
+    printf 'text: "%s"\n' "$(out_value "$OUT" mention_prefix)ok" >"${work}/p.yml"
+    if ruby -ryaml -e 'v = YAML.safe_load(File.read(ARGV[0]))["text"]
+                       abort "round-trip lost the backslashes: #{v.inspect}" unless v.include?("Drupal\\Core\\Entity")' "${work}/p.yml"; then
+      pass "payload parses and round-trips the original text"
+    else
+      fail "payload does not parse, or the text did not survive"
+    fi
+  fi
+else
+  fail "step exited non-zero: $(cat "${OUT}.stderr")"
+fi
+
+printf '== case 9: control characters are stripped\n'
+if run_notify "$(printf '<@U1>\033[0m\007x')"; then
+  got="$(out_value "$OUT" mention)"
+  if [[ "$got" == '<@U1>[0mx' ]]; then
+    pass "ESC and BEL removed, printable text kept"
+  else
+    fail "expected control characters stripped, got $(printf '%q' "$got")"
   fi
 else
   fail "step exited non-zero: $(cat "${OUT}.stderr")"
