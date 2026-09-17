@@ -99,23 +99,57 @@ already dirty when the agent starts.
   uses: phase2/octane-actions/actions/ci-autofix@main
   with:
     anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
+    # Write path: opens the PR.
     github_token: ${{ steps.app-token.outputs.token }}
+    # Read path: Actions API and the agent's log tools.
+    actions_read_token: ${{ github.token }}
     run_id: ${{ github.event.workflow_run.id }}
     workflow_name: Build Nightly
     base_branch: ${{ github.event.repository.default_branch }}
     slack_bot_token: ${{ secrets.SLACK_DRUPAL_SECURITY_UPDATES_BOT_TOKEN }}
     slack_channel_id: ${{ vars.SLACK_CHANNEL_ID }}
+    slack_mention: '<@U0123ABCDEF>'
 ```
 
-The token **must** be a GitHub App token, not `GITHUB_TOKEN`, or the fix PR will
-not trigger its own CI, which is the only real proof the fix works.
+## The two tokens, and why there are two
+
+`github_token` **must** be a GitHub App token, not `GITHUB_TOKEN`, or the fix PR
+will not trigger its own CI, which is the only real proof the fix works.
+
+`actions_read_token` must carry `actions: read`, and `GITHUB_TOKEN` is the right
+choice for it.
+
+These are separate inputs because an App installation token only ever carries the
+permissions the **App itself** was granted. A job's `permissions:` block governs
+`GITHUB_TOKEN` and nothing else, so declaring `actions: read` there does not give
+an App token Actions access. When the two were one input, the App token reached
+`GET /repos/{owner}/{repo}/actions/runs/{id}` and GitHub answered:
+
+```
+403 Resource not accessible by integration
+x-accepted-github-permissions: actions=read
+```
+
+That 403 aborts the action on its first call, before Claude is ever invoked. If
+you see it, the read path is using the App token again.
+
+The caller must therefore declare, on the job:
+
+```yaml
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read     # for actions_read_token and the github_ci MCP tools
+```
 
 ## Inputs
 
 | Input | Default | Description |
 |---|---|---|
 | `anthropic_api_key` | *(required)* | Anthropic API key |
-| `github_token` | `github.token` | Reads run logs and opens the PR. Use an App token. |
+| `github_token` | `github.token` | **Write path.** Opens the fix PR and supersedes prior ones. Use an App token. |
+| `actions_read_token` | `github.token` | **Read path.** Actions API and the agent's `github_ci` log tools. Needs `actions: read` from the calling job. |
 | `run_id` | `''` | Failed run to analyze. Empty means latest failed run of `workflow_name`. |
 | `workflow_name` | `Build Nightly` | Workflow to search when `run_id` is empty |
 | `working_directory` | `.` | Directory to operate in |
@@ -132,6 +166,7 @@ not trigger its own CI, which is the only real proof the fix works.
 | `max_changed_files` | `25` | Refuse to open a PR above this many changed files |
 | `slack_bot_token` | `''` | Slack bot token (needs `slack_channel_id`) |
 | `slack_channel_id` | `''` | Slack channel (needs `slack_bot_token`) |
+| `slack_mention` | `''` | Mention prepended to every notification, e.g. `<@U0123ABC>`, `<!subteam^S0123ABC>` for a user group, or `<!here>`. Sanitised before use. |
 | `slack_errors` | `false` | Fail the workflow if Slack notification fails |
 
 ## Outputs

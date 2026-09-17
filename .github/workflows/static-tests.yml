@@ -42,3 +42,16 @@ jobs:
           persist-credentials: false
       - name: Test PR body assembly
         run: bash actions/drupal-security-update/test-pr-body.sh
+
+  ci-autofix-notify:
+    name: ci-autofix token split and Slack mention
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+        with:
+          # This test executes a shell block it reads out of action.yml, so
+          # leave no token in .git/config for that code to find.
+          persist-credentials: false
+      - name: Test notify normalisation and token wiring
+        run: bash actions/ci-autofix/test-notify.sh
