@@ -11,7 +11,11 @@ inputs:
     description: 'Anthropic API key for Claude'
     required: true
   github_token:
-    description: 'GitHub token used to read run logs and open the PR. Should be a GitHub App token so the fix PR triggers its own CI.'
+    description: 'Write-scoped token used to open the fix PR and supersede prior ones. Should be a GitHub App token so the fix PR triggers its own CI; the default GITHUB_TOKEN does not.'
+    required: false
+    default: ${{ github.token }}
+  actions_read_token:
+    description: 'Read-scoped token used for the Actions API (run details, job list, job logs) and for the agent github_ci MCP tools. Needs actions:read, which the calling job must grant in its own permissions block. Kept separate from github_token because a GitHub App token only carries the permissions the App itself was granted, and an App with no Actions permission 403s here.'
     required: false
     default: ${{ github.token }}
   run_id:
@@ -78,6 +82,10 @@ inputs:
     description: 'Slack channel ID for notifications (requires slack_bot_token)'
     required: false
     default: ''
+  slack_mention:
+    description: 'Slack mention string prepended to every notification, for example "<@U0123ABC>" or "<!here>". Sanitised before use. Empty means no mention.'
+    required: false
+    default: ''
   slack_errors:
     description: 'If true, fail the workflow when a Slack notification fails'
     required: false
@@ -115,6 +123,33 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    # FIRST, deliberately. Every later step can fail, and a composite step with no
+    # `if:` is skipped once one has. The notification steps below run on
+    # always()/!cancelled(), so if the mention were normalised alongside the triage
+    # result it would be empty on exactly the runs that most need a human paged.
+    - name: Normalise notification settings
+      id: notify
+      shell: bash
+      env:
+        RAW_MENTION: ${{ inputs.slack_mention }}
+      run: |
+        set -uo pipefail
+        # Sanitised the same way `summary` is below, and for the same two reasons: a
+        # newline would close the step-output line and let further outputs be
+        # injected, and a double quote would break the YAML payload that
+        # slack-github-action parses at runtime.
+        mention=$(printf '%s' "${RAW_MENTION:-}" | tr '\r\n' '  ' | tr -d '"' | cut -c1-200)
+        # Trim, so an empty mention cannot leave a stray leading space in a message.
+        mention=$(printf '%s' "$mention" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        echo "mention=$mention" >> "$GITHUB_OUTPUT"
+        # A trailing-space variant, so every payload can interpolate one token and
+        # still read correctly when no mention is configured.
+        if [ -n "$mention" ]; then
+          echo "mention_prefix=$mention " >> "$GITHUB_OUTPUT"
+        else
+          echo "mention_prefix=" >> "$GITHUB_OUTPUT"
+        fi
+
     # Resolve the failed run and assemble a BOUNDED starting excerpt. The agent
     # pulls fuller logs itself via the github_ci MCP tools, so nothing here
     # inlines a whole job log into the prompt.
@@ -126,7 +161,9 @@ runs:
         INPUT_WORKFLOW_NAME: ${{ inputs.workflow_name }}
         INPUT_EXCERPT_LINES: ${{ inputs.log_excerpt_lines }}
       with:
-        github-token: ${{ inputs.github_token }}
+        # Read-scoped: every call below is an Actions read. The App token that
+        # github_token usually carries has no actions:read and 403s here.
+        github-token: ${{ inputs.actions_read_token }}
         script: |
           const excerptLines = parseInt(process.env.INPUT_EXCERPT_LINES, 10) || 150;
           const workflowName = process.env.INPUT_WORKFLOW_NAME;
@@ -247,7 +284,9 @@ runs:
       uses: anthropics/claude-code-action@v1
       with:
         anthropic_api_key: ${{ inputs.anthropic_api_key }}
-        github_token: ${{ inputs.github_token }}
+        # Read-scoped for the same reason: additional_permissions below exposes the
+        # github_ci MCP tools, which call the same Actions endpoints.
+        github_token: ${{ inputs.actions_read_token }}
         show_full_output: false
         # Required: on workflow_run the actor is inherited from the triggering
         # run, and claude-code-action hard-fails on a non-human actor otherwise.
@@ -672,7 +711,7 @@ runs:
         errors: ${{ inputs.slack_errors }}
         payload: |
           channel: ${{ inputs.slack_channel_id }}
-          text: "Nightly build failed in ${{ github.repository }} and a fix PR is ready for review: ${{ steps.create-pr.outputs.pull-request-url }}"
+          text: "${{ steps.notify.outputs.mention_prefix }}Nightly build failed in ${{ github.repository }} and a fix PR is ready for review: ${{ steps.create-pr.outputs.pull-request-url }}"
           blocks:
             - type: header
               text:
@@ -681,7 +720,7 @@ runs:
             - type: section
               text:
                 type: mrkdwn
-                text: "*${{ github.repository }}* nightly failed and an automated fix has been drafted.\n${{ steps.triage-result.outputs.summary }}"
+                text: "${{ steps.notify.outputs.mention_prefix }}*${{ github.repository }}* nightly failed and an automated fix has been drafted.\n${{ steps.triage-result.outputs.summary }}"
             - type: section
               fields:
                 - type: mrkdwn
@@ -705,7 +744,7 @@ runs:
         errors: ${{ inputs.slack_errors }}
         payload: |
           channel: ${{ inputs.slack_channel_id }}
-          text: "Nightly build failed in ${{ github.repository }}. Triage: ${{ steps.triage-result.outputs.classification }}. No fix PR was opened; manual attention needed."
+          text: "${{ steps.notify.outputs.mention_prefix }}Nightly build failed in ${{ github.repository }}. Triage: ${{ steps.triage-result.outputs.classification }}. No fix PR was opened; manual attention needed."
           blocks:
             - type: header
               text:
@@ -714,13 +753,16 @@ runs:
             - type: section
               text:
                 type: mrkdwn
-                text: "*${{ github.repository }}* nightly failed and no automated fix was opened.\n${{ steps.triage-result.outputs.summary }}"
+                text: "${{ steps.notify.outputs.mention_prefix }}*${{ github.repository }}* nightly failed and no automated fix was opened.\n${{ steps.triage-result.outputs.summary }}"
             - type: section
               fields:
                 - type: mrkdwn
                   text: "*Classification:*\n`${{ steps.triage-result.outputs.classification }}` (confidence ${{ steps.triage-result.outputs.confidence }})"
+                # Falls back to this run, because context is the step most likely to
+                # have failed when we reach here: on that path run_url is empty and
+                # a bare <|View run> renders as broken link text.
                 - type: mrkdwn
-                  text: "*Failed Run:*\n<${{ steps.context.outputs.run_url }}|View run>"
+                  text: "*Failed Run:*\n<${{ steps.context.outputs.run_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}|View run>"
                 - type: mrkdwn
                   text: "*Autofix Run:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View triage log>"
                 - type: mrkdwn
