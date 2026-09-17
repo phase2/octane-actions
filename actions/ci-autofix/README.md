@@ -166,7 +166,7 @@ permissions:
 | `max_changed_files` | `25` | Refuse to open a PR above this many changed files |
 | `slack_bot_token` | `''` | Slack bot token (needs `slack_channel_id`) |
 | `slack_channel_id` | `''` | Slack channel (needs `slack_bot_token`) |
-| `slack_mention` | `''` | Mention prepended to every notification, e.g. `<@U0123ABC>` or `<!here>`. Sanitised before use. |
+| `slack_mention` | `''` | Mention prepended to every notification, e.g. `<@U0123ABC>`, `<!subteam^S0123ABC>` for a user group, or `<!here>`. Sanitised before use. |
 | `slack_errors` | `false` | Fail the workflow if Slack notification fails |
 
 ## Outputs

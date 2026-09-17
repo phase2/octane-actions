@@ -83,7 +83,7 @@ inputs:
     required: false
     default: ''
   slack_mention:
-    description: 'Slack mention string prepended to every notification, for example "<@U0123ABC>" or "<!here>". Sanitised before use. Empty means no mention.'
+    description: 'Slack mention string prepended to every notification, for example "<@U0123ABC>" for a user, "<!subteam^S0123ABC>" for a user group, or "<!here>". Sanitised before use. Empty means no mention.'
     required: false
     default: ''
   slack_errors:
@@ -753,6 +753,12 @@ runs:
                   text: "*Action Required:*\n<${{ steps.create-pr.outputs.pull-request-url }}|Review the fix PR>"
                 - type: mrkdwn
                   text: "*Failed Run:*\n<${{ steps.context.outputs.run_url }}|View run>"
+                # The triage log. Present on the other two notifications and
+                # missing here, which is backwards: this is the one message
+                # that asserts a diagnosis, so it is the one where a reader
+                # most needs to see how the agent reached it.
+                - type: mrkdwn
+                  text: "*Autofix Run:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View triage log>"
                 - type: mrkdwn
                   text: "*Fingerprint:*\n`${{ steps.triage-result.outputs.fingerprint }}`"
                 - type: mrkdwn
