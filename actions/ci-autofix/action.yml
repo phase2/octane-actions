@@ -134,11 +134,24 @@ runs:
         RAW_MENTION: ${{ inputs.slack_mention }}
       run: |
         set -uo pipefail
-        # Sanitised the same way `summary` is below, and for the same two reasons: a
-        # newline would close the step-output line and let further outputs be
-        # injected, and a double quote would break the YAML payload that
-        # slack-github-action parses at runtime.
-        mention=$(printf '%s' "${RAW_MENTION:-}" | tr '\r\n' '  ' | tr -d '"' | cut -c1-200)
+        # Sanitised the same way `summary` is below, and for the same reasons.
+        # A newline would close the step-output line and let further outputs be
+        # injected. A double quote, a backslash or a control character would
+        # break the YAML payload slack-github-action parses at runtime: the
+        # payload interpolates this into a double-quoted scalar, where `\` opens
+        # an escape sequence, so a value like `Drupal\Core` is a hard parse
+        # error and BOTH notifications are lost. Note a parse failure is not
+        # gated by `slack_errors`; it raises regardless.
+        #
+        # Backslashes are doubled rather than deleted so the text survives, and
+        # that happens after `cut` so truncation cannot split a `\\` pair and
+        # strand a lone trailing backslash.
+        mention=$(printf '%s' "${RAW_MENTION:-}" \
+          | tr '\r\n' '  ' \
+          | tr -d '"' \
+          | tr -d '[:cntrl:]' \
+          | cut -c1-200 \
+          | sed -e 's/\\/\\\\/g')
         # Trim, so an empty mention cannot leave a stray leading space in a message.
         mention=$(printf '%s' "$mention" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
         echo "mention=$mention" >> "$GITHUB_OUTPUT"
@@ -385,7 +398,16 @@ runs:
           ''|*[!0-9.]*) confidence=0 ;;
         esac
         fingerprint=$(printf '%s' "$fingerprint" | tr -cd 'a-z0-9:._-' | cut -c1-120)
-        summary=$(printf '%s' "$summary" | tr '\r\n' '  ' | tr -d '"' | cut -c1-500)
+        # Same treatment as the mention above, and this is the site that matters
+        # most: `summary` is model output derived from a build log, so on a
+        # Drupal project a value like `Drupal\Core\Entity\...` is routine and
+        # would otherwise break the payload and lose the notification entirely.
+        summary=$(printf '%s' "$summary" \
+          | tr '\r\n' '  ' \
+          | tr -d '"' \
+          | tr -d '[:cntrl:]' \
+          | cut -c1-500 \
+          | sed -e 's/\\/\\\\/g')
         summary=${summary:-No summary produced.}
         [ "$changes_made" = "true" ] || changes_made="false"
 
@@ -702,8 +724,12 @@ runs:
           echo "::notice::Opened fix PR: ${PR_URL}"
         fi
 
+    # `!cancelled()` rather than a bare `if:`. Without a status function the
+    # runner prepends an implicit `success()`, so a failure in ANY later step
+    # (supersede, cost, report) skipped this notice while its sibling below was
+    # excluded by the non-empty URL. A fix PR would be opened and nobody told.
     - name: Slack notification for fix PR
-      if: steps.create-pr.outputs.pull-request-url != '' && inputs.slack_channel_id != '' && inputs.slack_bot_token != ''
+      if: ${{ !cancelled() && steps.create-pr.outputs.pull-request-url != '' && inputs.slack_channel_id != '' && inputs.slack_bot_token != '' }}
       uses: slackapi/slack-github-action@v2
       with:
         method: chat.postMessage
@@ -744,7 +770,7 @@ runs:
         errors: ${{ inputs.slack_errors }}
         payload: |
           channel: ${{ inputs.slack_channel_id }}
-          text: "${{ steps.notify.outputs.mention_prefix }}Nightly build failed in ${{ github.repository }}. Triage: ${{ steps.triage-result.outputs.classification }}. No fix PR was opened; manual attention needed."
+          text: "${{ steps.notify.outputs.mention_prefix }}Nightly build failed in ${{ github.repository }}. Triage: ${{ steps.triage-result.outputs.classification || 'not reached' }}. No fix PR was opened; manual attention needed."
           blocks:
             - type: header
               text:
@@ -753,16 +779,19 @@ runs:
             - type: section
               text:
                 type: mrkdwn
-                text: "${{ steps.notify.outputs.mention_prefix }}*${{ github.repository }}* nightly failed and no automated fix was opened.\n${{ steps.triage-result.outputs.summary }}"
+                text: "${{ steps.notify.outputs.mention_prefix }}*${{ github.repository }}* nightly failed and no automated fix was opened.\n${{ steps.triage-result.outputs.summary || 'Triage did not run; the action failed before classification.' }}"
             - type: section
               fields:
                 - type: mrkdwn
-                  text: "*Classification:*\n`${{ steps.triage-result.outputs.classification }}` (confidence ${{ steps.triage-result.outputs.confidence }})"
-                # Falls back to this run, because context is the step most likely to
-                # have failed when we reach here: on that path run_url is empty and
-                # a bare <|View run> renders as broken link text.
+                  text: "*Classification:*\n`${{ steps.triage-result.outputs.classification || 'not reached' }}` (confidence ${{ steps.triage-result.outputs.confidence || 'n/a' }})"
+                # context is the step most likely to have failed when we reach
+                # here, and on that path run_url is empty. Fall back to the
+                # run_id the caller passed, NOT to github.run_id: that is this
+                # run, so it would render the autofix run under a "Failed Run"
+                # label, identical to the "Autofix Run" field two lines below.
+                # If neither resolves, say so rather than emit a broken link.
                 - type: mrkdwn
-                  text: "*Failed Run:*\n<${{ steps.context.outputs.run_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}|View run>"
+                  text: "*Failed Run:*\n${{ steps.context.outputs.run_url && format('<{0}|View run>', steps.context.outputs.run_url) || (inputs.run_id && format('<{0}/{1}/actions/runs/{2}|View run>', github.server_url, github.repository, inputs.run_id)) || '_not resolved_' }}"
                 - type: mrkdwn
                   text: "*Autofix Run:*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View triage log>"
                 - type: mrkdwn
