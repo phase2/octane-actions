@@ -90,6 +90,10 @@ inputs:
     description: 'If true, fail the workflow when a Slack notification fails'
     required: false
     default: 'false'
+  debug_output:
+    description: 'If true, print the agent turn-by-turn transcript (claude-code-action show_full_output). Off by default, and NOT the only way it can be enabled: claude-code-action ORs this with the ACTIONS_STEP_DEBUG environment variable, so an env: block setting that turns the transcript on regardless of this input. The transcript is unsanitised. It carries tool results, contents of files the agent read, and API responses, any of which may hold credentials that GitHub secret masking does not catch, since masking only covers registered secrets. Use either path only in a controlled environment, after deciding the transcript is safe to expose.'
+    required: false
+    default: 'false'
 
 outputs:
   classification:
@@ -297,10 +301,25 @@ runs:
       uses: anthropics/claude-code-action@v1
       with:
         anthropic_api_key: ${{ inputs.anthropic_api_key }}
-        # Read-scoped for the same reason: additional_permissions below exposes the
-        # github_ci MCP tools, which call the same Actions endpoints.
+        # The read token, for two reasons that both still hold. The job's
+        # permissions: block governs GITHUB_TOKEN alone, so that is the only
+        # token whose scope the caller can actually constrain. And it keeps the
+        # App token away from an agent that reads attacker-influenceable build
+        # logs while holding Bash, Write and Edit.
+        #
+        # An earlier version of this comment justified it by the github_ci MCP
+        # tools needing the same endpoints. That reasoning is wrong: those tools
+        # are handed the CALLING workflow token by claude-code-action, not
+        # this input, and on workflow_run / workflow_dispatch the server
+        # appears never to be registered. See the open question in octane-ci
+        # docs/plans/nightly-autofix-token-split-and-alerting.md.
         github_token: ${{ inputs.actions_read_token }}
-        show_full_output: false
+        # Note this is an OR upstream, not the whole story: parse-sdk-options.ts
+        # computes `showFullOutput = options.showFullOutput === "true" ||
+        # ACTIONS_STEP_DEBUG === "true"`, so a caller that sets that env var
+        # gets the transcript whatever this input says. The guard below cannot
+        # prevent that; it only keeps THIS switch off by default.
+        show_full_output: ${{ inputs.debug_output }}
         # Required: on workflow_run the actor is inherited from the triggering
         # run, and claude-code-action hard-fails on a non-human actor otherwise.
         allowed_bots: "*"

@@ -196,6 +196,34 @@ permissions:
 | `slack_channel_id` | `''` | Slack channel (needs `slack_bot_token`) |
 | `slack_mention` | `''` | Mention prepended to every notification, e.g. `<@U0123ABC>`, `<!subteam^S0123ABC>` for a user group, or `<!here>`. Sanitised before use. |
 | `slack_errors` | `false` | Fail the workflow if Slack notification fails |
+| `debug_output` | `false` | Print the agent turn-by-turn transcript. Debugging only, and **not the only switch**: see the warning below. |
+
+### Enabling the transcript safely
+
+`debug_output` is one of **two** ways the transcript turns on. `claude-code-action`
+computes it as an OR:
+
+```ts
+const isDebugMode = process.env.ACTIONS_STEP_DEBUG === "true";
+const showFullOutput = options.showFullOutput === "true" || isDebugMode;
+```
+
+So a workflow that sets `ACTIONS_STEP_DEBUG` in an `env:` block gets the full
+transcript regardless of this input. That is an easy mistake to make, because
+GitHub's own documentation tells you to create an `ACTIONS_STEP_DEBUG` secret or
+variable to enable debug logging; mirroring it into `env:` silently enables this
+too.
+
+The transcript is **unsanitised**. It carries tool results, the contents of files
+the agent read, and API responses, any of which may hold credentials. GitHub
+secret masking only redacts values registered as secrets, so anything discovered
+at runtime is not covered. Use either path only in a controlled environment,
+after deciding the transcript is safe to expose.
+
+One thing not to rely on: as of 2026-09-18 a GitHub "re-run with debug logging"
+does **not** enable the transcript, because that sets `RUNNER_DEBUG` while the
+action reads `ACTIONS_STEP_DEBUG` (anthropics/claude-code-action#1604, open).
+That is an upstream bug, not a guarantee, and it will flip if they fix it.
 
 ## Outputs
 
