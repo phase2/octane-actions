@@ -50,6 +50,12 @@ material that lives there rather than here:
 .octane-ci/consumers/drupal/sync/docs/recommended-patches.md
 ```
 
+**These land in octane-ci first.** Everything except `recommended-patches.md`
+arrives with phase2/octane-ci#405; until that merges, the paths do not exist on
+octane-ci's default branch, which is what the action checks out. The runbook
+therefore treats every one of these reads as optional and its own four-step
+summary as self-sufficient, so this action is safe to merge on its own.
+
 Keeping the depth there rather than in this runbook means a human running
 Claude Code in octane-ci gets the same guidance through the `Skill` tool, and
 the runbook stays a runbook. The cost is a cross-repo coupling: renaming or
