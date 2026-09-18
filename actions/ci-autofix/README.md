@@ -36,6 +36,28 @@ arrives as a validated object on the `structured_output` output rather than as
 text to be parsed. Downstream steps gate on it. If you add a field to the schema,
 add it to `instructions.md` section 7 in the same commit; the two are a contract.
 
+### The runbook depends on files in the consuming repository
+
+`instructions.md` is written for **octane-ci** specifically. Beyond that repo's
+`.octane-ci/` layout it now points the agent at progressive-disclosure reference
+material that lives there rather than here:
+
+```
+.claude/skills/octane-composer-patches/SKILL.md
+.claude/skills/octane-composer-patches/references/patch-sources.md
+.claude/skills/octane-composer-patches/references/rerolling.md
+.claude/skills/octane-consumers/references/parity-map.md
+.octane-ci/consumers/drupal/sync/docs/recommended-patches.md
+```
+
+Keeping the depth there rather than in this runbook means a human running
+Claude Code in octane-ci gets the same guidance through the `Skill` tool, and
+the runbook stays a runbook. The cost is a cross-repo coupling: renaming or
+moving those files silently degrades the agent to whatever the runbook itself
+says. `--allowedTools` does **not** include `Skill`, so the agent reads them as
+plain files with `Read`; adding `Skill` would let it discover them on its own
+and is a reasonable future change, but has not been exercised in this workflow.
+
 ### Logs are fetched by the agent, not inlined
 
 `additional_permissions: actions: read` exposes the `mcp__github_ci__*` tools, so
