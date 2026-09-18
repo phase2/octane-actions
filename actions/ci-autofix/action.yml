@@ -91,7 +91,7 @@ inputs:
     required: false
     default: 'false'
   debug_output:
-    description: 'If true, print the agent turn-by-turn transcript (claude-code-action show_full_output). Off by default: the transcript echoes build-log content, which this action treats as untrusted. Turn on only to debug a specific run, and note that GitHub run-log debug mode alone does NOT reveal it; this input is the only switch that does.'
+    description: 'If true, print the agent turn-by-turn transcript (claude-code-action show_full_output). Off by default, and NOT the only way it can be enabled: claude-code-action ORs this with the ACTIONS_STEP_DEBUG environment variable, so an env: block setting that turns the transcript on regardless of this input. The transcript is unsanitised. It carries tool results, contents of files the agent read, and API responses, any of which may hold credentials that GitHub secret masking does not catch, since masking only covers registered secrets. Use either path only in a controlled environment, after deciding the transcript is safe to expose.'
     required: false
     default: 'false'
 
@@ -314,6 +314,11 @@ runs:
         # appears never to be registered. See the open question in octane-ci
         # docs/plans/nightly-autofix-token-split-and-alerting.md.
         github_token: ${{ inputs.actions_read_token }}
+        # Note this is an OR upstream, not the whole story: parse-sdk-options.ts
+        # computes `showFullOutput = options.showFullOutput === "true" ||
+        # ACTIONS_STEP_DEBUG === "true"`, so a caller that sets that env var
+        # gets the transcript whatever this input says. The guard below cannot
+        # prevent that; it only keeps THIS switch off by default.
         show_full_output: ${{ inputs.debug_output }}
         # Required: on workflow_run the actor is inherited from the triggering
         # run, and claude-code-action hard-fails on a non-human actor otherwise.
