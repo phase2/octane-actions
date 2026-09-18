@@ -90,6 +90,10 @@ inputs:
     description: 'If true, fail the workflow when a Slack notification fails'
     required: false
     default: 'false'
+  debug_output:
+    description: 'If true, print the agent turn-by-turn transcript (claude-code-action show_full_output). Off by default: the transcript echoes build-log content, which this action treats as untrusted. Turn on only to debug a specific run, and note that GitHub run-log debug mode alone does NOT reveal it; this input is the only switch that does.'
+    required: false
+    default: 'false'
 
 outputs:
   classification:
@@ -297,10 +301,20 @@ runs:
       uses: anthropics/claude-code-action@v1
       with:
         anthropic_api_key: ${{ inputs.anthropic_api_key }}
-        # Read-scoped for the same reason: additional_permissions below exposes the
-        # github_ci MCP tools, which call the same Actions endpoints.
+        # The read token, for two reasons that both still hold. The job's
+        # permissions: block governs GITHUB_TOKEN alone, so that is the only
+        # token whose scope the caller can actually constrain. And it keeps the
+        # App token away from an agent that reads attacker-influenceable build
+        # logs while holding Bash, Write and Edit.
+        #
+        # An earlier version of this comment justified it by the github_ci MCP
+        # tools needing the same endpoints. That reasoning is wrong: those tools
+        # are handed the CALLING workflow token by claude-code-action, not
+        # this input, and on workflow_run / workflow_dispatch the server
+        # appears never to be registered. See the open question in octane-ci
+        # docs/plans/nightly-autofix-token-split-and-alerting.md.
         github_token: ${{ inputs.actions_read_token }}
-        show_full_output: false
+        show_full_output: ${{ inputs.debug_output }}
         # Required: on workflow_run the actor is inherited from the triggering
         # run, and claude-code-action hard-fails on a non-human actor otherwise.
         allowed_bots: "*"

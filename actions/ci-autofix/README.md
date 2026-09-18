@@ -168,6 +168,7 @@ permissions:
 | `slack_channel_id` | `''` | Slack channel (needs `slack_bot_token`) |
 | `slack_mention` | `''` | Mention prepended to every notification, e.g. `<@U0123ABC>`, `<!subteam^S0123ABC>` for a user group, or `<!here>`. Sanitised before use. |
 | `slack_errors` | `false` | Fail the workflow if Slack notification fails |
+| `debug_output` | `false` | Print the agent turn-by-turn transcript. Debugging only: it echoes untrusted build-log content. GitHub run-log debug mode alone does **not** reveal the transcript; this is the only switch that does. |
 
 ## Outputs
 

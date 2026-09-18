@@ -141,6 +141,43 @@ ruby -ryaml -e '
 ' "$actionYml" && pass "notify is the first step and reads slack_mention from env:" || fail "notify step placement or wiring is wrong (see above)"
 
 # ---------------------------------------------------------------------------
+# The agent transcript echoes build-log content, which this action treats as
+# untrusted. It must stay off unless a caller deliberately asks for it, and the
+# wiring must go through the input rather than a hardcoded literal: a stray
+# `show_full_output: true` would print every run transcript forever and nothing
+# else would notice.
+printf '== the agent transcript stays off by default\n'
+
+ruby -ryaml -e '
+  y = YAML.load_file(ARGV[0])
+  inputs = y["inputs"] || {}
+  errors = []
+
+  dbg = inputs["debug_output"]
+  if dbg.nil?
+    errors << "input debug_output is missing"
+  elsif dbg["default"].to_s != "false"
+    errors << "debug_output defaults to #{dbg["default"].inspect}, not \"false\"; " \
+              "the transcript would print on every run"
+  end
+
+  triage = y["runs"]["steps"].find { |st| st["id"] == "triage" }
+  if triage.nil?
+    errors << "no step with id: triage"
+  else
+    val = (triage["with"] || {})["show_full_output"].to_s
+    if val.empty?
+      errors << "the Claude step does not set show_full_output at all"
+    elsif !val.include?("inputs.debug_output")
+      errors << "show_full_output is #{val.strip.inspect} rather than the " \
+                "debug_output input; a hardcoded value cannot be turned off by a caller"
+    end
+  end
+
+  abort errors.join("\n") unless errors.empty?
+' "$actionYml" && pass "debug_output defaults to false and drives show_full_output" || fail "transcript wiring is wrong (see above)"
+
+# ---------------------------------------------------------------------------
 printf '== both Slack payloads carry the mention\n'
 
 ruby -ryaml -e '
