@@ -57,6 +57,26 @@ adding `"symfony/runtime": true` to `config.allow-plugins`.
 An agent that patched only one of those files would have shipped a half-fix that
 silently leaves the other consumer broken. See "Consumer parity" below.
 
+### Worked example (the wrong-remedy failure)
+
+On 2026-09-18 the nightly failed with `Cannot apply patch 3037922 - PNG favicon
+in theme folder`. That entry pointed at a GitLab merge request `.diff` URL.
+
+The autofix run concluded the work had been merged into core, deleted the patch
+entry, and opened a PR. It was wrong on every point:
+
+- The merge request was open and unmerged; the issue status was "Needs review".
+- Upstream had rebased that merge request onto core `main` eight days earlier,
+  pulling a `main`-only type hint into the diff context that does not exist in
+  the `11.4.x` branch. That, not the core release in the same run, was the cause.
+- The core bump only looked causal because patches are applied solely when
+  Composer installs or updates the package, so none of the nights in between
+  had exercised the patch at all.
+
+The correct fix vendored the last good patch content and repointed both
+consumers at it. Deleting the entry would have silently dropped a feature from
+every downstream project while turning CI green. See "Patch failures" below.
+
 ## Process
 
 ### 1. Research before diagnosing
@@ -72,9 +92,30 @@ Read, in this order:
 3. `CLAUDE.md` for repository conventions.
 
 If a `.claude/skills/octane-*/SKILL.md` file covers the area you are touching
-(`octane-overview`, `octane-consumers`, `octane-actions`,
-`octane-fin-commands`, `octane-sync-templates`, `octane-devcloud`,
-`octane-generator`), read it before editing.
+(`octane-overview`, `octane-consumers`, `octane-composer-patches`,
+`octane-actions`, `octane-fin-commands`, `octane-sync-templates`,
+`octane-devcloud`, `octane-generator`), read it before editing.
+
+You have no `Skill` tool, so read these as plain files with `Read`. Several
+carry a `references/` subdirectory holding detail the `SKILL.md` deliberately
+leaves out. Read the `SKILL.md` first and follow its pointers only as far as
+the failure requires.
+
+These files may not exist yet on the branch you are on. If a `Read` returns not
+found, carry on with the guidance in this runbook and say in `pr_body.md` which
+reference was unavailable, so the reviewer knows how much of the procedure you
+were able to follow.
+
+- `.claude/skills/octane-composer-patches/references/patch-sources.md`:
+  patch-source stability, and the API calls that establish upstream state.
+- `.claude/skills/octane-composer-patches/references/rerolling.md`: how to
+  re-roll and verify a patch without running a build.
+- `.claude/skills/octane-consumers/references/parity-map.md`: which files must
+  stay byte-identical between the two Drupal consumers.
+
+Before touching any `patches` entry, also read
+`.octane-ci/consumers/drupal/sync/docs/recommended-patches.md`. It carries a
+standing rule that this repository has violated in its own defaults.
 
 ### 2. Gather the failure evidence
 
@@ -103,7 +144,9 @@ local edit fixes it:
 - Composer dependency drift (a new transitive dependency, a changed constraint).
 - A Composer plugin missing from `allow-plugins`.
 - A version constraint that no longer resolves.
-- A patch that no longer applies and needs a reroll or removal.
+- A patch that no longer applies. Classify it `code`, but do not decide
+  between re-rolling and removing it here; see "Patch failures" in
+  section 5.
 - A renamed or removed upstream package, module, or system package.
 - A broken template, script, or workflow source in this repo.
 
@@ -165,6 +208,71 @@ that owns the problem.
 | A `fin`/`ddev` command | `.octane-ci/commands/` or `.octane-ci/consumers/<consumer>/commands/` |
 | Helm/deploy behavior | `.octane-ci/consumers/drupal/charts/` or `.octane-ci/scripts/` |
 
+#### Patch failures: re-roll, repoint, or remove
+
+`Cannot apply patch` is the one failure class where the obvious fix is usually
+wrong. Removing the entry always makes the build green, including when the
+patch was still doing necessary work, so removal is the last option, not the
+first.
+
+Read `.claude/skills/octane-composer-patches/SKILL.md` before editing any
+`patches` entry, if it is present. The four steps below are the minimum and
+stand on their own if it is not:
+
+1. **Identify the source form.** A
+   `git.drupalcode.org/.../merge_requests/<N>.diff` URL is regenerated from the
+   merge request's current head, so it can change with no commit in this repo
+   and no change to the package. A local `project/patches/*.patch` file and a
+   dated `drupal.org/files/issues/...` file cannot.
+
+2. **Never infer that upstream merged the work. Query it.**
+
+   ```bash
+   MR=4108   # the merge request number from the patch URL
+   curl -s "https://git.drupalcode.org/api/v4/projects/project%2Fdrupal/merge_requests/$MR" \
+     | jq '{state, merged_at, target_branch, updated_at}'
+   ```
+
+   A non-null `merged_at` is the only result that supports obsolescence.
+   Anything else means *this* merge request did not land the change, which is
+   evidence but not proof: the same fix can be committed from a different
+   merge request and this one closed unmerged.
+
+   Then read the issue's Status field at
+   `https://www.drupal.org/project/drupal/issues/<issue-id>` (via `WebFetch`).
+   Only "Fixed" and "Closed (fixed)" support removal. "Needs review", "Needs
+   work", "RTBC", "Postponed" and the other "Closed (...)" states all mean the
+   work has not landed.
+
+   Either way, settle it by reading the installed version's own source. That is
+   the only evidence that licenses removal.
+
+3. **Do not assume a version bump in the same run caused it.** Patches are
+   applied only when Composer actually installs or updates that package, so a
+   bump is usually just the first run that exercised an already-broken patch.
+
+   Where you can test against the version before the bump as well
+   (`references/rerolling.md` carries a recipe that needs no build), failing
+   against both points at the patch source rather than the package. That
+   inference holds only for a *mutable* source. A vendored
+   `project/patches/*.patch` file and a dated drupal.org file cannot change, so
+   for those the answer is a re-roll against the new version.
+
+4. **Prefer vendoring.** Recover the last good content (for a rebased merge
+   request, diff the commit before the rebase against its merge base; the
+   recipe is in `references/rerolling.md`), re-roll it against the installed
+   version, write it under `sync/project/patches/` in both Drupal consumers,
+   and repoint both entries at the local file.
+
+   If you can neither obtain workable content nor prove the patch is obsolete,
+   say exactly that in `pr_body.md` and leave the entry alone. A reported dead
+   end is more useful than a guess in either direction.
+
+Remove a patch only if you can show the change is already present in the
+version being installed, by reading that version's source. When you do, name in
+`pr_body.md` the capability being dropped and what now provides it. If you
+cannot name it, do not remove the patch.
+
 #### Consumer parity is mandatory
 
 `drupal` (Docksal) and `drupal-ddev` (DDEV) are parallel consumers. Several
@@ -175,8 +283,9 @@ Before finishing any consumer-layer edit, check whether the file you changed has
 a counterpart:
 
 ```bash
-ls -la .octane-ci/consumers/drupal/sync/<path> \
-       .octane-ci/consumers/drupal-ddev/sync/<path>
+REL=composer.json   # the path relative to sync/
+ls -la .octane-ci/consumers/drupal/sync/"$REL" \
+       .octane-ci/consumers/drupal-ddev/sync/"$REL"
 ```
 
 If both exist as real files, **apply the same change to both**. If one is a
@@ -211,6 +320,15 @@ upgrade dependencies, reformat files, fix unrelated issues, or "tidy" anything.
 A reviewer must be able to see the whole fix at a glance and connect it to the
 failure.
 
+Minimal is not the same as destructive. Deleting a patch, a test, a dependency
+or a feature to make an error stop is a regression that happens to be green. If
+the smallest change you can find removes a capability, open `pr_body.md` with
+the `WARNING:` banner from section 8 and name what is being dropped.
+
+Do not discount `confidence` for this. That field scores the **classification**,
+and it gates whether a PR is opened at all, so lowering it for a property of the
+fix can suppress a correct fix entirely and leave the nightly failing.
+
 Match the surrounding style exactly: indentation (2 spaces, 4 in
 `composer.json`), key ordering (`allow-plugins` entries are alphabetical), and
 comment conventions.
@@ -223,10 +341,10 @@ You cannot run the build. Do what is checkable:
   ```bash
   jq -e . .octane-ci/consumers/drupal/sync/composer.json >/dev/null
   ```
-- Shell scripts parse: `bash -n <script>`.
+- Shell scripts parse: `bash -n path/to/script.sh`.
 - YAML parses:
   ```bash
-  python3 -c "import sys,yaml;yaml.safe_load(open(sys.argv[1]))" <file>
+  python3 -c "import sys,yaml;yaml.safe_load(open(sys.argv[1]))" path/to/file.yml
   ```
 - If you touched `actions/`, `build-actions.sh` ran cleanly and the regenerated
   workflow still parses.
@@ -234,6 +352,9 @@ You cannot run the build. Do what is checkable:
   it.
 - Parity holds: the two consumers' counterpart files still match where they are
   supposed to.
+- The diff touches only the lines you meant to change. Read `git diff` before
+  finishing. A structured-data edit that also disturbs indentation or key order
+  on a neighbouring line is a defect even though `jq -e .` still passes.
 
 State in `pr_body.md` exactly what you validated and what you could not, and be
 explicit that the real proof is the fix PR's own CI run.
