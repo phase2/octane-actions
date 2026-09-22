@@ -24,7 +24,42 @@ runs:
       with:
         method: kubeconfig
         kubeconfig: ${{ inputs.kubeconfig }}
+    # Resolve find-pod.sh through the GITHUB_ACTION_PATH variable, never the
+    # github.action_path expression. In a container: job the expression is
+    # substituted into the script as the runner's host path, which does not
+    # exist inside the container, while the variable resolves to the mounted
+    # /__w/_actions/... path. https://github.com/actions/runner/issues/2185
+    #
+    # Always emit an explicit true/false. Wrapping the probe in $( ) feeding
+    # echo let a probe that could not run exit 0 having set no output at all,
+    # which no consumer can tell apart from "no pod". Reporting false with a
+    # ::warning:: keeps the fail-open graph behaviour (consumers gate on
+    # == 'true') while ending the silence.
+    #
+    # This prose lives in YAML comments rather than inside run:, because a run:
+    # body is a string and expressions interpolate even inside shell comments.
     - name: Find pod
       id: find-pod
       shell: bash
-      run: echo "pod-status=$(${{ github.action_path }}/find-pod.sh ${{ inputs.release_name }})" >> $GITHUB_OUTPUT
+      env:
+        # Passed through env rather than interpolated into the run: body.
+        # Inlining an input into a shell command is a script-injection vector,
+        # and env: is the form GitHub's own composite-action docs use.
+        # https://docs.github.com/en/actions/tutorials/create-actions/create-a-composite-action
+        RELEASE_NAME: ${{ inputs.release_name }}
+      run: |
+        echo "::debug::detect-pod probing via ${GITHUB_ACTION_PATH}"
+
+        if ! podStatus="$("${GITHUB_ACTION_PATH}/find-pod.sh" "${RELEASE_NAME}")"; then
+          echo "::warning::detect-pod probe at ${GITHUB_ACTION_PATH}/find-pod.sh failed (see the error above). Reporting pod-status=false."
+          podStatus=""
+        fi
+
+        case "${podStatus}" in
+          true) echo "pod-status=true" >> "$GITHUB_OUTPUT" ;;
+          ""|false) echo "pod-status=false" >> "$GITHUB_OUTPUT" ;;
+          # find-pod.sh reads a recursive-descent JSONPath, so two matching pods
+          # mid-rollout concatenate into "truetrue". Tracked in issue #61.
+          *) echo "::warning::detect-pod probe returned '${podStatus}', which is neither true nor empty (more than one matching pod?). Reporting pod-status=false."
+             echo "pod-status=false" >> "$GITHUB_OUTPUT" ;;
+        esac
