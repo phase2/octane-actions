@@ -122,11 +122,16 @@ there, and they are read in the order they ran. Package names and versions are
 held to Composer's character set, because the comparison is inlined inside a
 prompt data tag and log text is untrusted.
 
-The baseline lookup pages through successful runs newest first (up to five
-pages of 100) and takes the first one older than the failure, so re-triaging an
-old failure still finds the green run before it. It compares against each
-candidate's `run_started_at` (its latest attempt), so a run re-run green after
-the failure does not qualify. It deliberately does not use
+The baseline lookup lists the workflow's runs with **no** server-side filter
+and filters in code: same branch, `success`, and started (latest attempt,
+`run_started_at`) before the failed run was created, so a run re-run green
+after the failure does not qualify. The newest match wins, not the first seen,
+and paging is bounded at five pages of 100. GitHub's own run-list filters are
+deliberately not used: on 2026-09-28 both `branch=main` and a percent-encoded
+`created=<...` (which is how Octokit sends it) intermittently returned a
+truncated set that skipped the three weeks before the failure, while the
+unfiltered listing stayed correct. Because the bad results were intermittent,
+a passing dry run did not prove either filter safe. It deliberately does not use
 the API's `created` filter: GitHub returns a wrong result set for a
 percent-encoded `<`, which is how Octokit sends it (observed 2026-09-28: the
 first result was 19 days older than the true answer).
