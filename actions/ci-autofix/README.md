@@ -74,7 +74,12 @@ the same workflow on the same branch that started earlier), to
 `$RUNNER_TEMP/autofix-logs/{failed-run,baseline-run}/NN-<job>.log`, with ANSI
 codes stripped. The directory is passed to Claude with `--add-dir` and the
 agent searches it with `Grep`, `Read` and `Bash`. It is outside the workspace,
-so nothing there can reach the change set or the PR.
+which only keeps the files themselves out of the change set and the PR commit.
+It is **not** a trust boundary: their content is untrusted build output that
+reaches an agent holding `Bash`, `Write` and `Edit`, exactly as the inlined
+excerpt always has. The mitigations are the ones below (untrusted-data framing,
+the change-set guard, human review); separating log analysis from the
+write-capable tools would be a larger design change.
 
 The prompt itself carries only a bounded excerpt (per-job line cap plus a 20k
 character total cap) and the dependency comparison below. Octane's nightly
@@ -97,10 +102,21 @@ path, which does not exist where the step and the agent run.
 `lib/log-context.js` extracts the resolved package versions from each run's
 Composer output across **all** jobs, not just the failed ones, and the prompt
 carries the diff. Resolution happens in a build job that usually passes; the
-job that fails is typically a later one. `Locking` lines are treated as a full
-resolution; when a run has none, install-side operations are used and the
-comparison is labelled `PARTIAL`. A missing baseline or missing Composer output
-is rendered as `UNKNOWN` in so many words, never as an empty diff.
+job that fails is typically a later one.
+
+A run's job logs are read as one log, in job order, and every Composer
+operation is applied in sequence, so a later `composer update` lands on top of
+an earlier resolution. The result counts as a **full** inventory only when the
+log shows a from-scratch resolution (Composer's `No composer.lock file present`
+notice, which the nightly always hits), because only then does Composer print a
+`Locking` line for every package. Otherwise it is `PARTIAL`: with a lock file
+present Composer lists only what changed, so the diff reports only version
+changes to packages seen in both runs, never "added" or "removed". A missing
+baseline, missing Composer output, or any job log that failed to download is
+rendered as `UNKNOWN` in so many words, never as an empty diff.
+
+The baseline lookup filters on `created` server-side, so re-triaging an old
+failure finds the green run before it rather than only the 20 newest.
 
 This exists because of the 2026-09-26 Build Nightly failure: the agent saw only
 the `Test` job's tail, reported "no code, package, or Docker image change"

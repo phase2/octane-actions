@@ -42,56 +42,63 @@ function jobLogFileName(index, jobName) {
 //   - Removing foo/baz (1.0.0)
 const OPERATION_RE = /^\s*-\s+(Locking|Installing|Upgrading|Downgrading|Removing)\s+(\S+\/\S+)\s+\(([^)]*)\)/;
 
+// Composer's notice when `composer install` finds no lock file and resolves
+// from scratch, which is what every Octane nightly does.
+const FRESH_RESOLUTION_RE = /No composer\.lock file present/;
+
 // Extract the package versions a log resolved to.
 //
-// `Locking` lines are a FULL resolution: Composer prints one for every package
-// when it computes a lock file, which is what happens on every run of a
-// lock-free build like Octane's nightly. Install-side lines are PARTIAL: they
-// list only what changed relative to whatever vendor/ already held. So when a
-// log has any Locking lines, only those are used and the result is marked
-// complete; otherwise the install operations are used and it is marked
-// partial, and a caller must not read a missing package as "not installed".
+// Operations are applied in the order they appear, so a later `composer
+// update` or `require` in the same log lands on top of an earlier resolution:
+// `Upgrading` and `Downgrading` move a version, `Removing` drops the package.
 //
-// If Composer ran more than once in the log, the last mention of a package
-// wins, since that is the state the build finished with.
+// The result is FULL only when the log shows a from-scratch resolution. That
+// resolution prints a `Locking` line for every package, so from that point the
+// map is a complete inventory. Anything else is PARTIAL: with a lock file
+// already present, Composer lists only what changed (a `Locking` line for a new
+// package, `Upgrading` for a moved one) and says nothing about the rest, so a
+// missing package is not evidence of anything.
 function extractPackageVersions(text) {
-  const locked = new Map();
-  const operated = new Map();
+  let packages = new Map();
+  let fresh = false;
+  let sawOperation = false;
   for (const rawLine of stripAnsi(text).split('\n')) {
-    const m = OPERATION_RE.exec(stripTimestamp(rawLine));
-    if (!m) continue;
-    const [, op, name, detail] = m;
-    // `1.4.9 => 1.5.0` becomes 1.5.0; a plain version passes through.
-    const version = detail.split('=>').pop().trim();
-    if (op === 'Locking') {
-      locked.set(name, version);
-    } else if (op === 'Removing') {
-      operated.set(name, null);
-    } else {
-      operated.set(name, version);
+    const line = stripTimestamp(rawLine);
+    if (FRESH_RESOLUTION_RE.test(line)) {
+      // Everything before this is superseded by the resolution that follows.
+      packages = new Map();
+      fresh = true;
+      continue;
     }
+    const m = OPERATION_RE.exec(line);
+    if (!m) continue;
+    sawOperation = true;
+    const [, op, name, detail] = m;
+    if (op === 'Removing') {
+      packages.delete(name);
+      continue;
+    }
+    // `1.4.9 => 1.5.0` becomes 1.5.0; a plain version passes through.
+    packages.set(name, detail.split('=>').pop().trim());
   }
-  if (locked.size > 0) {
-    return { source: 'lock', packages: locked };
-  }
-  // A Removing line records an absence, not a version.
-  for (const [name, version] of operated) {
-    if (version === null) operated.delete(name);
-  }
-  return { source: operated.size > 0 ? 'install' : 'none', packages: operated };
+  const source = fresh && packages.size > 0 ? 'full' : (sawOperation ? 'partial' : 'none');
+  return { source, packages };
 }
 
-// Merge per-job extraction results into one per-run result. A full (lock)
-// resolution from any job beats partial install operations from another.
-function mergePackageVersions(results) {
-  const lock = results.filter(r => r.source === 'lock');
-  const chosen = lock.length > 0 ? lock : results.filter(r => r.source === 'install');
-  const packages = new Map();
-  for (const r of chosen) {
-    for (const [name, version] of r.packages) packages.set(name, version);
+// Extract one run's package versions from all of its job logs.
+//
+// `logs` is [{ name, text, downloadFailed }] in job order. The texts are read as
+// one log, so an update in a later job lands on the resolution of an earlier
+// one. If ANY job's log could not be downloaded, the result is `unreadable`:
+// with no reliable way to tell which job ran Composer, a missing log could hold
+// the resolution, and reporting a diff from the rest would assert changes from
+// incomplete data.
+function extractRunPackages(logs) {
+  const unreadable = logs.filter(l => l.downloadFailed).map(l => l.name);
+  if (unreadable.length > 0) {
+    return { source: 'unreadable', packages: new Map(), unreadable };
   }
-  const source = lock.length > 0 ? 'lock' : (packages.size > 0 ? 'install' : 'none');
-  return { source, packages };
+  return extractPackageVersions(logs.map(l => l.text).join('\n'));
 }
 
 function diffPackageVersions(baseline, failed) {
@@ -132,6 +139,14 @@ function formatDependencyDiff({ failed, baseline, baselineRun, maxChars = 6000 }
   lines.push(`successful run of this workflow on this branch: ${baselineRun.html_url}`);
   lines.push('');
 
+  for (const [label, r] of [['the failed run', failed], ['the baseline run', baseline]]) {
+    if (r.source === 'unreadable') {
+      lines.push(`The log(s) of ${r.unreadable.join(', ')} in ${label} could not be downloaded,`);
+      lines.push('so dependency changes are UNKNOWN. Check the saved logs for what did load.');
+      return lines.join('\n');
+    }
+  }
+
   if (failed.source === 'none' || baseline.source === 'none') {
     const which = failed.source === 'none' && baseline.source === 'none'
       ? 'either run'
@@ -142,16 +157,28 @@ function formatDependencyDiff({ failed, baseline, baselineRun, maxChars = 6000 }
     return lines.join('\n');
   }
 
-  if (failed.source !== 'lock' || baseline.source !== 'lock') {
-    lines.push('PARTIAL: at least one run shows only install operations, not a full');
-    lines.push('resolution, so packages absent from this list may still differ.');
+  // Added and Removed are only meaningful between two complete inventories. In
+  // a partial map a package is absent because Composer did not touch it, so
+  // only version changes to packages seen on both sides are reported.
+  const complete = failed.source === 'full' && baseline.source === 'full';
+  if (!complete) {
+    lines.push('PARTIAL: at least one run shows only incremental Composer operations, not a');
+    lines.push('from-scratch resolution. Only version changes to packages seen in both runs');
+    lines.push('are listed; packages absent from this list may still differ.');
     lines.push('');
   }
 
   const diff = diffPackageVersions(baseline.packages, failed.packages);
+  if (!complete) {
+    diff.added = [];
+    diff.removed = [];
+  }
   const total = diff.changed.length + diff.added.length + diff.removed.length;
   if (total === 0) {
-    lines.push(`No resolved package versions differ (${failed.packages.size} packages compared).`);
+    const compared = complete
+      ? failed.packages.size
+      : [...failed.packages.keys()].filter(name => baseline.packages.has(name)).length;
+    lines.push(`No resolved package versions differ (${compared} packages compared).`);
     return lines.join('\n');
   }
 
@@ -187,7 +214,7 @@ module.exports = {
   stripTimestamp,
   jobLogFileName,
   extractPackageVersions,
-  mergePackageVersions,
+  extractRunPackages,
   diffPackageVersions,
   formatDependencyDiff,
 };

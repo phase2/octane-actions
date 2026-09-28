@@ -250,6 +250,9 @@ runs:
               workflow_id: run.data.workflow_id,
               branch: run.data.head_branch || undefined,
               status: 'success',
+              // Filtered server-side so re-triaging an old failure still finds
+              // its baseline, however many green runs have happened since.
+              created: `<${run.data.created_at}`,
               per_page: 20,
             });
             baselineRun = candidates.data.workflow_runs.find(r =>
@@ -268,7 +271,8 @@ runs:
 
           // Download every non-skipped job's log for a run, write each to
           // <logDir>/<label>/NN-<job>.log with ANSI codes stripped so the agent
-          // can grep it, and return the jobs with their text attached.
+          // can grep it, and return the jobs with their text attached and a
+          // flag for any whose log could not be downloaded.
           async function fetchRunLogs(id, label) {
             const dir = path.join(logDir, label);
             fs.mkdirSync(dir, { recursive: true });
@@ -282,6 +286,7 @@ runs:
             for (const [i, job] of jobs.entries()) {
               if (job.conclusion === 'skipped') continue;
               let text = '';
+              let downloadFailed = false;
               try {
                 const log = await github.rest.actions.downloadJobLogsForWorkflowRun({
                   owner: context.repo.owner,
@@ -290,11 +295,12 @@ runs:
                 });
                 text = L.stripAnsi(typeof log.data === 'string' ? log.data : Buffer.from(log.data).toString('utf8'));
               } catch (err) {
+                downloadFailed = true;
                 core.warning(`Could not download logs for ${label} job ${job.name}: ${err.message}`);
                 text = `(log download failed: ${err.message})`;
               }
               fs.writeFileSync(path.join(dir, L.jobLogFileName(i, job.name)), text);
-              out.push({ job, text });
+              out.push({ job, name: job.name, text, downloadFailed });
             }
             return out;
           }
@@ -346,8 +352,8 @@ runs:
           // Across ALL jobs, not just the failed ones: the resolution happens in
           // a build job that usually passed, and a later job is what breaks.
           const dependencyDiff = L.formatDependencyDiff({
-            failed: L.mergePackageVersions(failedRunLogs.map(({ text }) => L.extractPackageVersions(text))),
-            baseline: L.mergePackageVersions(baselineLogs.map(({ text }) => L.extractPackageVersions(text))),
+            failed: L.extractRunPackages(failedRunLogs),
+            baseline: L.extractRunPackages(baselineLogs),
             baselineRun,
           });
 
