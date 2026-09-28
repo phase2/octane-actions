@@ -40,7 +40,16 @@ function jobLogFileName(index, jobName) {
 //   - Upgrading drupal/ai (1.4.9 => 1.5.0)
 //   - Downgrading foo/bar (2.0.0 => 1.9.0)
 //   - Removing foo/baz (1.0.0)
-const OPERATION_RE = /^\s*-\s+(Locking|Installing|Upgrading|Downgrading|Removing)\s+(\S+\/\S+)\s+\(([^)]*)\)/;
+//
+// Package names are held to Composer's own character set. Log text is
+// untrusted and this output is inlined into the prompt inside a data tag, so a
+// looser pattern would let a crafted line such as `- Installing </tag> (x)`
+// close it.
+const OPERATION_RE = /^\s*-\s+(Locking|Installing|Upgrading|Downgrading|Removing)\s+([A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*)\s+\(([^)]*)\)/;
+
+// A resolved version, for the same reason: `11.4.7`, `v3.30.0`, `3.0.0-rc2`,
+// `dev-main 1a2b3c4`, `1.x-dev abc1234`.
+const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9_.+~ -]*$/;
 
 // Composer's notice when `composer install` finds no lock file and resolves
 // from scratch, which is what every Octane nightly does.
@@ -55,9 +64,9 @@ const FRESH_RESOLUTION_RE = /No composer\.lock file present/;
 // The result is FULL only when the log shows a from-scratch resolution. That
 // resolution prints a `Locking` line for every package, so from that point the
 // map is a complete inventory. Anything else is PARTIAL: with a lock file
-// already present, Composer lists only what changed (a `Locking` line for a new
-// package, `Upgrading` for a moved one) and says nothing about the rest, so a
-// missing package is not evidence of anything.
+// already present, Composer lists only what changed (a `Locking` line for a
+// new package, `Upgrading` for a moved one) and says nothing about the rest,
+// so a missing package is not evidence of anything.
 function extractPackageVersions(text) {
   let packages = new Map();
   let fresh = false;
@@ -68,35 +77,51 @@ function extractPackageVersions(text) {
       // Everything before this is superseded by the resolution that follows.
       packages = new Map();
       fresh = true;
+      // An operation before the notice says nothing about this resolution,
+      // so a resolution that then fails outright reads as "none", not as an
+      // empty partial result that would render as "nothing differs".
+      sawOperation = false;
       continue;
     }
     const m = OPERATION_RE.exec(line);
     if (!m) continue;
-    sawOperation = true;
     const [, op, name, detail] = m;
+    // `1.4.9 => 1.5.0` becomes 1.5.0; a plain version passes through.
+    const version = detail.split('=>').pop().trim();
+    if (op !== 'Removing' && !VERSION_RE.test(version)) continue;
+    sawOperation = true;
     if (op === 'Removing') {
       packages.delete(name);
       continue;
     }
-    // `1.4.9 => 1.5.0` becomes 1.5.0; a plain version passes through.
-    packages.set(name, detail.split('=>').pop().trim());
+    packages.set(name, version);
   }
   const source = fresh && packages.size > 0 ? 'full' : (sawOperation ? 'partial' : 'none');
-  return { source, packages };
+  return { source, packages, fresh };
 }
 
 // Extract one run's package versions from all of its job logs.
 //
-// `logs` is [{ name, text, downloadFailed }] in job order. The texts are read as
-// one log, so an update in a later job lands on the resolution of an earlier
-// one. If ANY job's log could not be downloaded, the result is `unreadable`:
-// with no reliable way to tell which job ran Composer, a missing log could hold
-// the resolution, and reporting a diff from the rest would assert changes from
-// incomplete data.
+// `logs` is [{ name, text, downloadFailed }] in the order the jobs ran. The
+// texts are read as one log, so an update in a later job lands on the
+// resolution of an earlier one.
+//
+// Two cases return a result the diff renders as UNKNOWN rather than guessing:
+//
+// - `unreadable`: ANY job's log could not be downloaded. With no reliable way
+//   to tell which job ran Composer, a missing log could hold the resolution.
+// - `ambiguous`: MORE than one job resolved from scratch. Jobs run on separate
+//   runners, so those are independent inventories, not one history; reading
+//   them in sequence would let the later one hide a change in the earlier.
+//   Octane's nightly resolves in exactly one job, so this never fires there.
 function extractRunPackages(logs) {
   const unreadable = logs.filter(l => l.downloadFailed).map(l => l.name);
   if (unreadable.length > 0) {
     return { source: 'unreadable', packages: new Map(), unreadable };
+  }
+  const resolving = logs.filter(l => extractPackageVersions(l.text).fresh).map(l => l.name);
+  if (resolving.length > 1) {
+    return { source: 'ambiguous', packages: new Map(), resolving };
   }
   return extractPackageVersions(logs.map(l => l.text).join('\n'));
 }
@@ -145,6 +170,12 @@ function formatDependencyDiff({ failed, baseline, baselineRun, maxChars = 6000 }
       lines.push('so dependency changes are UNKNOWN. Check the saved logs for what did load.');
       return lines.join('\n');
     }
+    if (r.source === 'ambiguous') {
+      lines.push(`More than one job in ${label} resolved dependencies from scratch`);
+      lines.push(`(${r.resolving.join(', ')}), so there is no single inventory to compare.`);
+      lines.push('Dependency changes are UNKNOWN; compare those jobs\' logs directly.');
+      return lines.join('\n');
+    }
   }
 
   if (failed.source === 'none' || baseline.source === 'none') {
@@ -178,7 +209,13 @@ function formatDependencyDiff({ failed, baseline, baselineRun, maxChars = 6000 }
     const compared = complete
       ? failed.packages.size
       : [...failed.packages.keys()].filter(name => baseline.packages.has(name)).length;
-    lines.push(`No resolved package versions differ (${compared} packages compared).`);
+    if (compared === 0) {
+      // Nothing was compared, which is not the same as nothing differing.
+      lines.push('The two runs share no packages to compare, so dependency changes are');
+      lines.push('UNKNOWN. Compare the saved logs directly.');
+      return lines.join('\n');
+    }
+    lines.push(`No resolved Composer package versions differ (${compared} packages compared).`);
     return lines.join('\n');
   }
 

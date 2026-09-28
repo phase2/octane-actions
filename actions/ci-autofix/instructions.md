@@ -157,12 +157,16 @@ large, so grep rather than reading whole files.
   warnings, different package versions, different patch output) before deciding
   what changed.
 - The dependency comparison in the prompt is the authoritative answer to "did
-  the dependencies change?". It was extracted from every job's Composer output
-  in both runs. If it says `UNKNOWN` or `PARTIAL`, treat the question as open
-  and check the logs yourself.
+  the **Composer** packages change?", and only that. It was extracted from
+  every job's Composer output in both runs. It says nothing about npm
+  packages, the Docker images, system packages or anything else that can drift
+  between two runs of the same commit; check those in the logs yourself. If it
+  says `UNKNOWN` or `PARTIAL`, treat even the Composer question as open.
+- Credentials in the saved logs have been replaced with `[REDACTED:<kind>]`
+  markers. A marker is not a clue to the failure; ignore it.
 
-The `mcp__github_ci__*` tools may be listed as available, but they have never
-been observed to work on this trigger. Do not depend on them.
+The `mcp__github_ci__*` tools are not available on this trigger (the agent
+starts with `mcp_servers: []`). Do not depend on them.
 
 ### 3. Classify the failure
 
@@ -198,7 +202,9 @@ Prefer `unknown` over a low-confidence guess.
 **The same commit does not mean the same build.** The nightly has no committed
 lock file, so a run on an unchanged commit can resolve different dependencies
 from the night before. Never call a failure `infra` on the grounds that
-"nothing changed" unless the dependency comparison shows no difference. If
+"nothing changed" unless the dependency comparison shows no Composer
+difference AND you have checked the other inputs (npm packages, images) in the
+logs. If
 dependencies moved and the failure plausibly follows from them, it is `code`
 (upstream drift) even when you cannot find a fix, or `unknown` if the link is
 weak; it is not `infra`.

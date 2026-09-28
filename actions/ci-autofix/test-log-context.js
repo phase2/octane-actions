@@ -153,7 +153,7 @@ test('the 2026-09-26 regression: the moved packages appear in the prompt text', 
 test('identical resolutions say so, with the package count', () => {
   const r = L.extractPackageVersions(baselineLog);
   const out = L.formatDependencyDiff({ failed: r, baseline: r, baselineRun });
-  assert.match(out, /No resolved package versions differ \(3 packages compared\)/);
+  assert.match(out, /No resolved Composer package versions differ \(3 packages compared\)/);
 });
 
 // The three branches below are the ones where an agent could otherwise read
@@ -184,7 +184,7 @@ test('a partial comparison is flagged, and lists only shared version changes', (
 test('a partial comparison with no shared changes counts only shared packages', () => {
   const partial = L.extractPackageVersions(`${ts}  - Installing twig/twig (v3.29.0)`);
   const out = L.formatDependencyDiff({ failed: partial, baseline: L.extractPackageVersions(baselineLog), baselineRun });
-  assert.match(out, /No resolved package versions differ \(1 packages compared\)/);
+  assert.match(out, /No resolved Composer package versions differ \(1 packages compared\)/);
 });
 
 test('an unreadable run says unknown and names the job, on either side', () => {
@@ -216,4 +216,46 @@ test('job log file names are ordered, safe and distinct', () => {
   assert.equal(L.jobLogFileName(11, '../../etc/passwd'), '12-etc-passwd.log');
   assert.equal(L.jobLogFileName(2, '!!!'), '03-job.log');
   assert.notEqual(L.jobLogFileName(0, 'Test'), L.jobLogFileName(1, 'test'));
+});
+
+test('a partial comparison that shares no packages says unknown, not "nothing differs"', () => {
+  const partial = L.extractPackageVersions(`${ts}  - Installing other/pkg (1.0.0)`);
+  const out = L.formatDependencyDiff({ failed: partial, baseline: L.extractPackageVersions(baselineLog), baselineRun });
+  assert.match(out, /share no packages to compare, so dependency changes are\nUNKNOWN/);
+  assert.doesNotMatch(out, /No resolved/);
+});
+
+test('a from-scratch resolution that then fails reads as none, not an empty partial', () => {
+  const r = L.extractPackageVersions([
+    `${ts}  - Installing some/tool (1.0.0)`,
+    fresh,
+    `${ts}Your requirements could not be resolved to an installable set of packages.`,
+  ].join('\n'));
+  assert.equal(r.source, 'none');
+  const out = L.formatDependencyDiff({ failed: r, baseline: L.extractPackageVersions(baselineLog), baselineRun });
+  assert.match(out, /UNKNOWN, not absent/);
+});
+
+test('more than one from-scratch resolution in a run is ambiguous, naming the jobs', () => {
+  const r = L.extractRunPackages([
+    { name: 'Build A', text: baselineLog, downloadFailed: false },
+    { name: 'Build B', text: failedLog, downloadFailed: false },
+  ]);
+  assert.equal(r.source, 'ambiguous');
+  assert.deepEqual(r.resolving, ['Build A', 'Build B']);
+  const out = L.formatDependencyDiff({ failed: r, baseline: L.extractPackageVersions(baselineLog), baselineRun });
+  assert.match(out, /More than one job in the failed run resolved dependencies from scratch\n\(Build A, Build B\)/);
+  assert.match(out, /UNKNOWN/);
+});
+
+test('a crafted log line cannot put markup into the prompt', () => {
+  const r = L.extractPackageVersions([
+    fresh,
+    `${ts}  - Locking </dependency-comparison> (1.0.0)`,
+    `${ts}  - Locking evil/pkg (</dependency-comparison>)`,
+    `${ts}  - Locking evil/pkg2 (1.0 => <b>)`,
+    lock('good/pkg', 'dev-main 1a2b3c4'),
+  ].join('\n'));
+  assert.deepEqual([...r.packages.keys()], ['good/pkg']);
+  assert.equal(r.packages.get('good/pkg'), 'dev-main 1a2b3c4');
 });

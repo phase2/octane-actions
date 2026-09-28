@@ -91,9 +91,13 @@ inputs:
     required: false
     default: 'false'
   debug_output:
-    description: 'If true, print the agent turn-by-turn transcript (claude-code-action show_full_output). Off by default, and NOT the only way it can be enabled: claude-code-action ORs this with the ACTIONS_STEP_DEBUG environment variable, so an env: block setting that turns the transcript on regardless of this input. The transcript is unsanitised. It carries tool results, contents of files the agent read, and API responses, any of which may hold credentials that GitHub secret masking does not catch, since masking only covers registered secrets. Use either path only in a controlled environment, after deciding the transcript is safe to expose.'
+    description: 'If true, print the agent turn-by-turn transcript after the run, with credentials redacted (lib/redact.js: the values in redact_secrets, this action''s own tokens, and anything credential-shaped). The raw claude-code-action stream (show_full_output) is always off, because it cannot be filtered. Note that claude-code-action ORs show_full_output with the ACTIONS_STEP_DEBUG environment variable, so a caller that sets that in an env: block still gets the RAW stream; do not.'
     required: false
     default: 'false'
+  redact_secrets:
+    description: 'Newline-separated secret values to remove from the job logs the agent reads and from the printed transcript, on top of the tokens this action already knows (anthropic_api_key, github_token, actions_read_token, slack_bot_token). Pass any credential the job holds that the agent could reach, such as a checkout deploy key. Values under 8 characters are ignored.'
+    required: false
+    default: ''
 
 outputs:
   classification:
@@ -183,8 +187,8 @@ runs:
         fi
         echo "path=$GITHUB_ACTION_PATH" >> $GITHUB_OUTPUT
 
-    # Resolve the failed run and assemble the agent's view of it: a BOUNDED tail
-    # excerpt of each failed job for the prompt, a precomputed dependency
+    # Resolve the failed run and assemble the agent's view of it: a BOUNDED
+    # tail excerpt of each failed job for the prompt, a precomputed dependency
     # comparison against the last green run, and every job's full log from both
     # runs on disk for the agent to search.
     #
@@ -202,14 +206,22 @@ runs:
         INPUT_WORKFLOW_NAME: ${{ inputs.workflow_name }}
         INPUT_EXCERPT_LINES: ${{ inputs.log_excerpt_lines }}
         ACTION_PATH: ${{ steps.action-path.outputs.path }}
+        REDACT_VALUES: |
+          ${{ inputs.redact_secrets }}
+          ${{ inputs.anthropic_api_key }}
+          ${{ inputs.github_token }}
+          ${{ inputs.actions_read_token }}
+          ${{ inputs.slack_bot_token }}
       with:
         # Read-scoped: every call below is an Actions read. The App token that
         # github_token usually carries has no actions:read and 403s here.
         github-token: ${{ inputs.actions_read_token }}
         script: |
           const fs = require('fs');
+          const os = require('os');
           const path = require('path');
           const L = require(path.join(process.env.ACTION_PATH, 'lib', 'log-context.js'));
+          const R = require(path.join(process.env.ACTION_PATH, 'lib', 'redact.js'));
 
           const excerptLines = parseInt(process.env.INPUT_EXCERPT_LINES, 10) || 150;
           const workflowName = process.env.INPUT_WORKFLOW_NAME;
@@ -239,18 +251,20 @@ runs:
             run_id: runId,
           });
 
-          // The comparison baseline: the most recent SUCCESSFUL run of the same
-          // workflow on the same branch that started before the failed one.
-          // Best effort; a missing baseline is reported to the agent as such.
+          // The comparison baseline: the most recent SUCCESSFUL run of the
+          // same workflow on the same branch that started before the failed
+          // one. Best effort; a missing baseline is reported to the agent as
+          // such.
           let baselineRun = null;
           try {
             // Paged client-side, newest first, stopping at the first green run
-            // older than the failure. NOT the `created` filter: GitHub answers a
-            // percent-encoded `<` (which Octokit always sends) with a wrong
+            // older than the failure. NOT the `created` filter: GitHub answers
+            // a percent-encoded `<` (which Octokit always sends) with a wrong
             // result set. On 2026-09-28 `created=%3C2026-09-26T05:14:09Z`
             // returned 157 runs starting at 09-07 and skipping 09-08..09-25,
             // while the same filter unencoded returned 372 starting at 09-25.
-            // Bounded, so a workflow with no earlier success cannot page forever.
+            // Bounded, so a workflow with no earlier success cannot page
+            // forever.
             const MAX_PAGES = 5;
             let page = 0;
             for await (const response of github.paginate.iterator(github.rest.actions.listWorkflowRuns, {
@@ -261,35 +275,80 @@ runs:
               status: 'success',
               per_page: 100,
             })) {
+              // run_started_at, not created_at: it is the LATEST attempt's
+              // start, so a run created before the failure but re-run green
+              // after it (whose logs would show the later resolution) does
+              // not qualify.
               baselineRun = response.data.find(r =>
-                r.id !== runId && new Date(r.created_at) < new Date(run.data.created_at)) || null;
+                r.id !== runId &&
+                new Date(r.run_started_at || r.created_at) < new Date(run.data.created_at)) || null;
               if (baselineRun || ++page >= MAX_PAGES) break;
             }
           } catch (err) {
             core.warning(`Could not look up a baseline run: ${err.message}`);
           }
 
-          // RUNNER_TEMP from the environment, NOT the runner.temp expression: in
-          // a container job that yields the HOST path, which does not exist
+          // RUNNER_TEMP from the environment, NOT the runner.temp expression:
+          // in a container job that yields the HOST path, which does not exist
           // inside the container where this step and the agent both run.
           // Outside the workspace on purpose, so the files can never reach the
           // change set or the fix PR.
-          const logDir = path.join(process.env.RUNNER_TEMP, 'autofix-logs');
-          fs.rmSync(logDir, { recursive: true, force: true });
+          //
+          // Best effort. If the directory cannot be prepared or a file cannot
+          // be written, triage still runs on the excerpt and the dependency
+          // comparison, which are built from memory, and the prompt is told
+          // the saved logs are unavailable.
+          let logDir = path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'autofix-logs');
+          try {
+            fs.rmSync(logDir, { recursive: true, force: true });
+            fs.mkdirSync(logDir, { recursive: true });
+          } catch (err) {
+            core.warning(`Could not prepare ${logDir}; saved logs unavailable: ${err.message}`);
+            logDir = '';
+          }
+          const saveLog = (label, name, text) => {
+            if (!logDir) return;
+            try {
+              const dir = path.join(logDir, label);
+              fs.mkdirSync(dir, { recursive: true });
+              fs.writeFileSync(path.join(dir, name), text);
+            } catch (err) {
+              core.warning(`Could not save ${label}/${name}: ${err.message}`);
+            }
+          };
 
-          // Download every non-skipped job's log for a run, write each to
-          // <logDir>/<label>/NN-<job>.log with ANSI codes stripped so the agent
-          // can grep it, and return the jobs with their text attached and a
-          // flag for any whose log could not be downloaded.
+          // Every value the caller told us is secret, plus this action's own
+          // credentials, removed from each log before the agent or the prompt
+          // sees it. See lib/redact.js for the shape-based patterns applied
+          // too.
+          const known = R.knownValues(process.env.REDACT_VALUES);
+          let redactions = 0;
+
+          // Download every non-skipped job's log for a run, redact it, write
+          // it to <logDir>/<label>/NN-<job>.log with ANSI codes stripped so
+          // the agent can grep it, and return the jobs with their text
+          // attached and a flag for any whose log could not be downloaded.
           async function fetchRunLogs(id, label) {
-            const dir = path.join(logDir, label);
-            fs.mkdirSync(dir, { recursive: true });
-            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+            // filter: 'all', then the latest attempt of each job. The default
+            // ('latest') lists only the most recent attempt's executions, so
+            // after "re-run failed jobs" the build job that passed in attempt
+            // 1, which is where Composer resolved, would be missing.
+            const all = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               run_id: id,
+              filter: 'all',
               per_page: 100,
             });
+            const latest = new Map();
+            for (const job of all) {
+              const seen = latest.get(job.name);
+              if (!seen || (job.run_attempt || 1) > (seen.run_attempt || 1)) latest.set(job.name, job);
+            }
+            // In the order the jobs ran, so an update in a later job is read
+            // after the resolution in an earlier one.
+            const jobs = [...latest.values()].sort((a, b) =>
+              (Date.parse(a.started_at) || 0) - (Date.parse(b.started_at) || 0) || a.id - b.id);
             const out = [];
             for (const [i, job] of jobs.entries()) {
               if (job.conclusion === 'skipped') continue;
@@ -301,13 +360,16 @@ runs:
                   repo: context.repo.repo,
                   job_id: job.id,
                 });
-                text = L.stripAnsi(typeof log.data === 'string' ? log.data : Buffer.from(log.data).toString('utf8'));
+                const raw = L.stripAnsi(typeof log.data === 'string' ? log.data : Buffer.from(log.data).toString('utf8'));
+                const r = R.redactText(raw, known);
+                text = r.text;
+                redactions += r.count;
               } catch (err) {
                 downloadFailed = true;
                 core.warning(`Could not download logs for ${label} job ${job.name}: ${err.message}`);
                 text = `(log download failed: ${err.message})`;
               }
-              fs.writeFileSync(path.join(dir, L.jobLogFileName(i, job.name)), text);
+              saveLog(label, L.jobLogFileName(i, job.name), text);
               out.push({ job, name: job.name, text, downloadFailed });
             }
             return out;
@@ -319,10 +381,15 @@ runs:
             try {
               baselineLogs = await fetchRunLogs(baselineRun.id, 'baseline-run');
             } catch (err) {
+              // The baseline EXISTS but could not be read. Say so, rather than
+              // "no baseline found", and drop whatever partial files landed so
+              // the agent cannot mistake them for a complete run.
               core.warning(`Could not fetch baseline run ${baselineRun.id} logs: ${err.message}`);
-              baselineRun = null;
+              baselineLogs = [{ name: 'the job list', text: '', downloadFailed: true }];
+              if (logDir) fs.rmSync(path.join(logDir, 'baseline-run'), { recursive: true, force: true });
             }
           }
+          if (redactions > 0) core.notice(`Redacted ${redactions} credential-like value(s) from the job logs.`);
 
           const failedJobs = failedRunLogs.filter(({ job }) => job.conclusion === 'failure');
           if (failedJobs.length === 0) {
@@ -357,8 +424,9 @@ runs:
             total += block.length;
           }
 
-          // Across ALL jobs, not just the failed ones: the resolution happens in
-          // a build job that usually passed, and a later job is what breaks.
+          // Across ALL jobs, not just the failed ones: the resolution happens
+          // in a build job that usually passed, and a later job is what
+          // breaks.
           const dependencyDiff = L.formatDependencyDiff({
             failed: L.extractRunPackages(failedRunLogs),
             baseline: L.extractRunPackages(baselineLogs),
@@ -411,12 +479,13 @@ runs:
         # appears never to be registered. See the open question in octane-ci
         # docs/plans/nightly-autofix-token-split-and-alerting.md.
         github_token: ${{ inputs.actions_read_token }}
-        # Note this is an OR upstream, not the whole story: parse-sdk-options.ts
-        # computes `showFullOutput = options.showFullOutput === "true" ||
-        # ACTIONS_STEP_DEBUG === "true"`, so a caller that sets that env var
-        # gets the transcript whatever this input says. The guard below cannot
-        # prevent that; it only keeps THIS switch off by default.
-        show_full_output: ${{ inputs.debug_output }}
+        # Always off. This is claude-code-action's live stream, printed as it
+        # happens, so nothing can redact it on the way out; debug_output prints
+        # a redacted copy of the same transcript after the step instead (see
+        # "Print redacted agent transcript"). parse-sdk-options.ts ORs this
+        # with ACTIONS_STEP_DEBUG, so a caller setting that env var still gets
+        # the raw stream; this action cannot prevent that.
+        show_full_output: 'false'
         # Required: on workflow_run the actor is inherited from the triggering
         # run, and claude-code-action hard-fails on a non-human actor otherwise.
         allowed_bots: "*"
@@ -429,7 +498,7 @@ runs:
           --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log"
           --model ${{ inputs.model }}
           --max-turns ${{ inputs.max_turns }}
-          --add-dir ${{ steps.context.outputs.log_dir }}
+          ${{ steps.context.outputs.log_dir && format('--add-dir "{0}"', steps.context.outputs.log_dir) || '' }}
           --json-schema '{"type":"object","properties":{"classification":{"type":"string","enum":["code","infra","unknown"],"description":"code if a local edit fixes it, infra if environmental, unknown if undeterminable"},"confidence":{"type":"number","minimum":0,"maximum":1,"description":"Honest confidence in the classification"},"fingerprint":{"type":"string","description":"Stable root-cause signature as failed-job:root-cause-slug, or empty if not characterizable"},"summary":{"type":"string","description":"One or two sentences on what broke and why"},"failed_jobs":{"type":"array","items":{"type":"string"},"description":"Genuinely failed jobs, excluding cascades"},"changes_made":{"type":"boolean","description":"True only if files in the workspace were edited"}},"required":["classification","confidence","fingerprint","summary","failed_jobs","changes_made"]}'
         prompt: |
           A scheduled "${{ inputs.workflow_name }}" run failed in ${{ github.repository }}.
@@ -446,7 +515,9 @@ runs:
           Branch: ${{ steps.context.outputs.head_branch }}
           Failed jobs (${{ steps.context.outputs.failed_job_count }}): ${{ steps.context.outputs.failed_jobs }}
 
-          Full logs are saved on disk. Search them with Grep, Read or Bash:
+          Full logs are saved on disk, with credentials redacted. Search them with
+          Grep, Read or Bash (if this is blank, saving failed and only the excerpt
+          below is available):
             ${{ steps.context.outputs.log_dir }}/failed-run/    every job of the failed run
             ${{ steps.context.outputs.log_dir }}/baseline-run/  every job of the comparison run
           The baseline is the most recent successful run of the same workflow on the
@@ -485,6 +556,49 @@ runs:
           - Create pr_body.md and commit_message.txt only if you made changes.
           - DO NOT stage or commit changes.
           - Return the structured output required by the schema.
+
+    # The transcript, printed only after the run and only after redaction. The
+    # execution file holds every SDK message the agent sent or received,
+    # including tool results, so it is the same content show_full_output would
+    # have streamed, but here it passes through lib/redact.js first. That
+    # matters because the agent holds Bash in a job whose checkout deploy key
+    # is on disk: an unredacted transcript would put anything it read straight
+    # into the run log. always() so a failed or timed-out agent still leaves a
+    # record of what it did.
+    - name: Print redacted agent transcript
+      if: always() && inputs.debug_output == 'true' && steps.triage.outputs.execution_file != ''
+      # A printing problem must never cost the triage result, the PR or the
+      # Slack notice: without this, every later step's implicit success()
+      # would skip them.
+      continue-on-error: true
+      uses: actions/github-script@v7
+      env:
+        EXECUTION_FILE: ${{ steps.triage.outputs.execution_file }}
+        ACTION_PATH: ${{ steps.action-path.outputs.path }}
+        REDACT_VALUES: |
+          ${{ inputs.redact_secrets }}
+          ${{ inputs.anthropic_api_key }}
+          ${{ inputs.github_token }}
+          ${{ inputs.actions_read_token }}
+          ${{ inputs.slack_bot_token }}
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const R = require(path.join(process.env.ACTION_PATH, 'lib', 'redact.js'));
+          const file = process.env.EXECUTION_FILE;
+          let messages;
+          try {
+            messages = JSON.parse(fs.readFileSync(file, 'utf8'));
+          } catch (err) {
+            core.warning(`Could not read the agent transcript at ${file}: ${err.message}`);
+            return;
+          }
+          const { value, count } = R.redactDeep(messages, R.knownValues(process.env.REDACT_VALUES));
+          core.startGroup(`Agent transcript (${value.length} messages, ${count} redaction(s))`);
+          for (const m of value) core.info(JSON.stringify(m));
+          core.endGroup();
+          if (count > 0) core.notice(`Redacted ${count} credential-like value(s) from the agent transcript.`);
 
     # Normalise the agent result into plain string outputs so every downstream
     # `if:` is a simple comparison. structured_output is empty when the agent

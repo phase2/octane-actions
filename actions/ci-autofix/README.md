@@ -112,12 +112,21 @@ notice, which the nightly always hits), because only then does Composer print a
 `Locking` line for every package. Otherwise it is `PARTIAL`: with a lock file
 present Composer lists only what changed, so the diff reports only version
 changes to packages seen in both runs, never "added" or "removed". A missing
-baseline, missing Composer output, or any job log that failed to download is
-rendered as `UNKNOWN` in so many words, never as an empty diff.
+baseline, missing Composer output, any job log that failed to download, a
+comparison that shares no packages, or a run where more than one job resolved
+from scratch (independent inventories on separate runners, which cannot be read
+as one history) is rendered as `UNKNOWN` in so many words, never as an empty
+diff. Jobs are listed with `filter: 'all'` and the latest attempt of each kept,
+so after "re-run failed jobs" the build job that passed in attempt 1 is still
+there, and they are read in the order they ran. Package names and versions are
+held to Composer's character set, because the comparison is inlined inside a
+prompt data tag and log text is untrusted.
 
 The baseline lookup pages through successful runs newest first (up to five
 pages of 100) and takes the first one older than the failure, so re-triaging an
-old failure still finds the green run before it. It deliberately does not use
+old failure still finds the green run before it. It compares against each
+candidate's `run_started_at` (its latest attempt), so a run re-run green after
+the failure does not qualify. It deliberately does not use
 the API's `created` filter: GitHub returns a wrong result set for a
 percent-encoded `<`, which is how Octokit sends it (observed 2026-09-28: the
 first result was 19 days older than the true answer).
@@ -130,9 +139,9 @@ Drupal core 11.4.7; core 11.4.8 fixed it the next day. For a build with no
 committed lock file, the commit SHA says nothing about whether dependencies
 changed.
 
-The helpers are pure and covered by `test-log-context.js`
-(`node --test actions/ci-autofix/test-log-context.js`), which runs in the
-Static Tests workflow.
+The helpers are pure and covered by `test-log-context.js` and
+`test-redact.js` (`node --test actions/ci-autofix/test-*.js`), which run in
+the Static Tests workflow.
 
 ### `allowed_bots: "*"` is mandatory here
 
@@ -140,6 +149,31 @@ In agent mode `claude-code-action` calls `checkHumanActor` unconditionally and
 throws unless the actor is a real user or is allow-listed. On a `workflow_run`
 trigger the actor is inherited from the triggering run, so a bot-initiated build
 would hard-fail without this.
+
+### Credentials are redacted deterministically
+
+The agent holds `Bash` in a job that usually has credentials within reach. In
+Octane's wrapper the checkout's SSH deploy key is persisted on disk, and it has
+to be: `create-pull-request` pushes over that SSH remote. Removing the key is
+therefore not an option, so nothing the agent is shown and nothing printed from
+its session is trusted to be clean. `lib/redact.js` runs at both points:
+
+- **Before the agent sees the logs.** Every job log is scrubbed before it is
+  written to disk or cut into the prompt excerpt.
+- **Before the transcript is printed.** See `debug_output` below.
+
+It removes the exact values the caller passes in `redact_secrets`, plus this
+action's own tokens (and, for a multi-line secret such as a key, each of its
+lines on its own). It also removes anything credential-shaped whether or not it
+is known: PEM private keys (an unterminated one to the end of the text), GitHub,
+Anthropic, Slack and AWS key formats, JWTs, `user:password@` in URLs, and
+`Authorization:` header values. GitHub's own masking is not relied on, because
+it covers registered secrets only and masks multi-line values on a best-effort
+basis. `test-redact.js` pins all of this.
+
+What it does not cover: a credential the agent sends out itself, for example
+through `WebFetch`, never touches the log. Redaction closes the path where a
+secret the agent read lands in the run log; it is not a sandbox.
 
 ### Log content is untrusted
 
@@ -258,34 +292,32 @@ permissions:
 | `slack_channel_id` | `''` | Slack channel (needs `slack_bot_token`) |
 | `slack_mention` | `''` | Mention prepended to every notification, e.g. `<@U0123ABC>`, `<!subteam^S0123ABC>` for a user group, or `<!here>`. Sanitised before use. |
 | `slack_errors` | `false` | Fail the workflow if Slack notification fails |
-| `debug_output` | `false` | Print the agent turn-by-turn transcript. Debugging only, and **not the only switch**: see the warning below. |
+| `debug_output` | `false` | Print the agent turn-by-turn transcript after the run, **redacted**. See below. |
+| `redact_secrets` | `''` | Newline-separated extra secret values to remove from the saved logs and the printed transcript, on top of this action's own tokens. Pass any credential the job holds that the agent could reach, such as a checkout deploy key. |
 
 ### Enabling the transcript safely
 
-`debug_output` is one of **two** ways the transcript turns on. `claude-code-action`
-computes it as an OR:
+`debug_output` prints the transcript from `claude-code-action`'s execution file
+in a separate step after the agent finishes, with every string passed through
+`lib/redact.js`. The action's own live stream (`show_full_output`) is hardcoded
+off, because it prints as it happens and nothing can filter it. See
+"Credentials are redacted deterministically" above.
+
+One way around that remains, and this action cannot close it.
+`claude-code-action` computes the live stream as an OR:
 
 ```ts
 const isDebugMode = process.env.ACTIONS_STEP_DEBUG === "true";
 const showFullOutput = options.showFullOutput === "true" || isDebugMode;
 ```
 
-So a workflow that sets `ACTIONS_STEP_DEBUG` in an `env:` block gets the full
-transcript regardless of this input. That is an easy mistake to make, because
-GitHub's own documentation tells you to create an `ACTIONS_STEP_DEBUG` secret or
-variable to enable debug logging; mirroring it into `env:` silently enables this
-too.
-
-The transcript is **unsanitised**. It carries tool results, the contents of files
-the agent read, and API responses, any of which may hold credentials. GitHub
-secret masking only redacts values registered as secrets, so anything discovered
-at runtime is not covered. Use either path only in a controlled environment,
-after deciding the transcript is safe to expose.
-
-One thing not to rely on: as of 2026-09-18 a GitHub "re-run with debug logging"
-does **not** enable the transcript, because that sets `RUNNER_DEBUG` while the
-action reads `ACTIONS_STEP_DEBUG` (anthropics/claude-code-action#1604, open).
-That is an upstream bug, not a guarantee, and it will flip if they fix it.
+So a workflow that sets `ACTIONS_STEP_DEBUG` in an `env:` block gets the RAW,
+unredacted transcript. That is an easy mistake to make, because GitHub's own
+documentation tells you to create an `ACTIONS_STEP_DEBUG` secret or variable to
+enable debug logging; mirroring it into `env:` silently enables this too. Do
+not. (A GitHub "re-run with debug logging" does not trigger it as of
+2026-09-18, because that sets `RUNNER_DEBUG`; that is upstream bug
+anthropics/claude-code-action#1604, not a guarantee.)
 
 ## Outputs
 
