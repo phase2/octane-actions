@@ -15,7 +15,9 @@ token.
 1. Resolves the failed run (an explicit `run_id`, or the most recent failed run
    of `workflow_name`).
 2. Collects the failed job list and a **bounded** tail excerpt of each failed
-   job's log.
+   job's log, saves every job's full log from the failed run and from the last
+   green run of the same workflow to disk, and computes a Composer package
+   version comparison between the two.
 3. Runs Claude against `instructions.md`, an Octane-aware runbook.
 4. Claude **classifies before fixing**:
    - `code`: a local edit fixes it, so it produces a minimal fix.
@@ -64,13 +66,53 @@ says. `--allowedTools` does **not** include `Skill`, so the agent reads them as
 plain files with `Read`; adding `Skill` would let it discover them on its own
 and is a reasonable future change, but has not been exercised in this workflow.
 
-### Logs are fetched by the agent, not inlined
+### Logs are saved to disk, not inlined
 
-`additional_permissions: actions: read` exposes the `mcp__github_ci__*` tools, so
-the agent pulls the logs it needs for the jobs that failed. The prompt carries
-only a bounded excerpt (per-job line cap plus a 20k character total cap) as a
-starting point. Octane's nightly streams a full remote `composer install`;
-inlining that would be both a cost and a context-window problem.
+Before the agent runs, the action downloads the log of every non-skipped job in
+the failed run, and in the **baseline run** (the most recent successful run of
+the same workflow on the same branch that started earlier), to
+`$RUNNER_TEMP/autofix-logs/{failed-run,baseline-run}/NN-<job>.log`, with ANSI
+codes stripped. The directory is passed to Claude with `--add-dir` and the
+agent searches it with `Grep`, `Read` and `Bash`. It is outside the workspace,
+so nothing there can reach the change set or the PR.
+
+The prompt itself carries only a bounded excerpt (per-job line cap plus a 20k
+character total cap) and the dependency comparison below. Octane's nightly
+streams a full remote `composer install`; inlining that would be both a cost
+and a context-window problem.
+
+This replaces an earlier design in which the agent fetched logs itself through
+the `mcp__github_ci__*` tools. Those tools have never been observed to register
+on a `workflow_run` or `workflow_dispatch` trigger (`claude-code-action` only
+adds the server for PR entity events), so in practice the tail excerpt was the
+agent's only view. `additional_permissions: actions: read` and the tool names in
+`--allowedTools` are kept so they work unchanged if that ever changes.
+
+`$RUNNER_TEMP` is read from the environment inside the step, never from the
+`runner.temp` expression: in a container job the expression yields the host
+path, which does not exist where the step and the agent run.
+
+### The dependency comparison is precomputed
+
+`lib/log-context.js` extracts the resolved package versions from each run's
+Composer output across **all** jobs, not just the failed ones, and the prompt
+carries the diff. Resolution happens in a build job that usually passes; the
+job that fails is typically a later one. `Locking` lines are treated as a full
+resolution; when a run has none, install-side operations are used and the
+comparison is labelled `PARTIAL`. A missing baseline or missing Composer output
+is rendered as `UNKNOWN` in so many words, never as an empty diff.
+
+This exists because of the 2026-09-26 Build Nightly failure: the agent saw only
+the `Test` job's tail, reported "no code, package, or Docker image change"
+between green and red nights, and classified it `infra`. In fact `twig/twig`
+had moved 3.29.0 to 3.30.0 and `drupal/ai` 1.4.9 to 1.5.0 that night, against
+Drupal core 11.4.7; core 11.4.8 fixed it the next day. For a build with no
+committed lock file, the commit SHA says nothing about whether dependencies
+changed.
+
+The helpers are pure and covered by `test-log-context.js`
+(`node --test actions/ci-autofix/test-log-context.js`), which runs in the
+Static Tests workflow.
 
 ### `allowed_bots: "*"` is mandatory here
 
@@ -82,8 +124,8 @@ would hard-fail without this.
 ### Log content is untrusted
 
 Build logs are attacker-influenceable in the general case. The prompt explicitly
-frames the log excerpt as data, not instructions. Keep that framing if you edit
-the prompt.
+frames the log excerpt, the dependency comparison and the saved log files as
+data, not instructions. Keep that framing if you edit the prompt.
 
 ### Two independent guards stop a runaway run
 

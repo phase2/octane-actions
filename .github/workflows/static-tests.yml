@@ -55,3 +55,14 @@ jobs:
           persist-credentials: false
       - name: Test notify normalisation and token wiring
         run: bash actions/ci-autofix/test-notify.sh
+
+  ci-autofix-log-context:
+    name: ci-autofix dependency comparison
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test log parsing and the dependency diff
+        run: node --test actions/ci-autofix/test-log-context.js

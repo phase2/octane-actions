@@ -77,6 +77,25 @@ The correct fix vendored the last good patch content and repointed both
 consumers at it. Deleting the entry would have silently dropped a feature from
 every downstream project while turning CI green. See "Patch failures" below.
 
+### Worked example (the false-infra call)
+
+On 2026-09-26 the nightly's `Test` job failed: every page returned HTTP 500.
+The run had the same commit as seven green nights before it. The autofix run
+saw only the `Test` job's tail, reported "no code, package, or Docker image
+change", and classified it `infra` with 0.87 confidence.
+
+The package claim was never checked, and it was false. That night Composer
+resolved `twig/twig` 3.30.0 (up from 3.29.0) and `drupal/ai` 1.5.0 (up from
+1.4.9, pulling in six new modules) against Drupal core 11.4.7. The next night
+core 11.4.8 resolved and the build was green again, consistent with a Twig 3.30
+incompatibility in core 11.4.7 that other projects had also hit.
+
+The honest output was `code` (upstream dependency drift) naming the moved
+packages, with a fix only if one could be justified (for example a temporary
+`conflict` on the incompatible version in both consumers), or `unknown` with
+those packages named in the summary. Either would have pointed a human at the
+cause; `infra` pointed them away from it.
+
 ## Process
 
 ### 1. Research before diagnosing
@@ -119,17 +138,31 @@ standing rule that this repository has violated in its own defaults.
 
 ### 2. Gather the failure evidence
 
-The prompt gives you the failed run URL, the failed job list, and a bounded
-error excerpt. That excerpt is a starting point, not the whole story.
+The prompt gives you the failed run URL, the failed job list, a bounded tail
+excerpt of each failed job, a dependency comparison, and the path to a
+directory of saved logs. The excerpt is a starting point, not the whole story.
 
-Pull the detail you need with the CI tools available to you:
+The saved logs are the full evidence. Every job of the failed run is under
+`failed-run/`, and every job of the baseline run (the most recent successful run
+of the same workflow on the same branch) is under `baseline-run/`, one file per
+job, ANSI codes stripped. Search them with `Grep`, `Read` and `Bash`; they are
+large, so grep rather than reading whole files.
 
-- `mcp__github_ci__get_workflow_run_details` for the run's job/step structure.
-- `mcp__github_ci__download_job_log` for a specific failed job's log.
+- Read the earliest genuine error rather than the last line of output.
+  Cascading failures are common: the `build` job failing usually makes `test`
+  fail too, and only `build` matters.
+- **Look beyond the jobs that failed.** Dependency resolution, patch
+  application and site install happen in earlier jobs that usually pass. When a
+  later job fails, compare those earlier jobs between the two runs (new
+  warnings, different package versions, different patch output) before deciding
+  what changed.
+- The dependency comparison in the prompt is the authoritative answer to "did
+  the dependencies change?". It was extracted from every job's Composer output
+  in both runs. If it says `UNKNOWN` or `PARTIAL`, treat the question as open
+  and check the logs yourself.
 
-Fetch logs only for jobs that actually failed, and read the earliest genuine
-error rather than the last line of output. Cascading failures are common: the
-`build` job failing usually makes `test` fail too, and only `build` matters.
+The `mcp__github_ci__*` tools may be listed as available, but they have never
+been observed to work on this trigger. Do not depend on them.
 
 ### 3. Classify the failure
 
@@ -161,6 +194,17 @@ local edit fixes it:
 
 **`unknown`** means you genuinely cannot tell, or the logs are insufficient.
 Prefer `unknown` over a low-confidence guess.
+
+**The same commit does not mean the same build.** The nightly has no committed
+lock file, so a run on an unchanged commit can resolve different dependencies
+from the night before. Never call a failure `infra` on the grounds that
+"nothing changed" unless the dependency comparison shows no difference. If
+dependencies moved and the failure plausibly follows from them, it is `code`
+(upstream drift) even when you cannot find a fix, or `unknown` if the link is
+weak; it is not `infra`.
+
+Put only verified facts in `summary`. If you did not check something, do not
+assert it; say what the evidence shows and what it does not.
 
 Set `confidence` honestly. It gates whether a PR is opened at all.
 
