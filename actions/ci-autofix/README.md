@@ -115,8 +115,12 @@ changes to packages seen in both runs, never "added" or "removed". A missing
 baseline, missing Composer output, or any job log that failed to download is
 rendered as `UNKNOWN` in so many words, never as an empty diff.
 
-The baseline lookup filters on `created` server-side, so re-triaging an old
-failure finds the green run before it rather than only the 20 newest.
+The baseline lookup pages through successful runs newest first (up to five
+pages of 100) and takes the first one older than the failure, so re-triaging an
+old failure still finds the green run before it. It deliberately does not use
+the API's `created` filter: GitHub returns a wrong result set for a
+percent-encoded `<`, which is how Octokit sends it (observed 2026-09-28: the
+first result was 19 days older than the true answer).
 
 This exists because of the 2026-09-26 Build Nightly failure: the agent saw only
 the `Test` job's tail, reported "no code, package, or Docker image change"
