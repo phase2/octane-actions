@@ -141,41 +141,62 @@ ruby -ryaml -e '
 ' "$actionYml" && pass "notify is the first step and reads slack_mention from env:" || fail "notify step placement or wiring is wrong (see above)"
 
 # ---------------------------------------------------------------------------
-# The agent transcript echoes build-log content, which this action treats as
-# untrusted. It must stay off unless a caller deliberately asks for it, and the
-# wiring must go through the input rather than a hardcoded literal: a stray
-# `show_full_output: true` would print every run transcript forever and nothing
-# else would notice.
-printf '== the agent transcript stays off by default\n'
+# The agent transcript can carry anything the agent read, and the agent holds
+# Bash in a job whose checkout deploy key is on disk. So the transcript may
+# only ever reach the log through the redacting print step:
+#
+# - claude-code-action's raw stream (show_full_output) is the literal 'false'.
+#   It prints live, so nothing can filter it; a caller-controlled value here
+#   would reopen the unredacted path.
+# - debug_output defaults off and gates the print step, which loads
+#   lib/redact.js and is continue-on-error so it can never cost the outcome.
+# - Both places that redact receive the caller's redact_secrets.
+printf '== the agent transcript only reaches the log redacted\n'
 
 ruby -ryaml -e '
   y = YAML.load_file(ARGV[0])
   inputs = y["inputs"] || {}
+  steps = y["runs"]["steps"]
   errors = []
 
   dbg = inputs["debug_output"]
   if dbg.nil?
     errors << "input debug_output is missing"
   elsif dbg["default"].to_s != "false"
-    errors << "debug_output defaults to #{dbg["default"].inspect}, not \"false\"; " \
-              "the transcript would print on every run"
+    errors << "debug_output defaults to #{dbg["default"].inspect}, not \"false\""
   end
+  errors << "input redact_secrets is missing" unless inputs.key?("redact_secrets")
 
-  triage = y["runs"]["steps"].find { |st| st["id"] == "triage" }
+  triage = steps.find { |st| st["id"] == "triage" }
   if triage.nil?
     errors << "no step with id: triage"
   else
-    val = (triage["with"] || {})["show_full_output"].to_s
-    if val.empty?
-      errors << "the Claude step does not set show_full_output at all"
-    elsif !val.include?("inputs.debug_output")
-      errors << "show_full_output is #{val.strip.inspect} rather than the " \
-                "debug_output input; a hardcoded value cannot be turned off by a caller"
+    val = (triage["with"] || {})["show_full_output"].to_s.strip
+    unless val == "false"
+      errors << "show_full_output is #{val.inspect}, not the literal false; the raw, " \
+                "unredactable stream could print"
+    end
+  end
+
+  printer = steps.find { |st| st["name"] == "Print redacted agent transcript" }
+  if printer.nil?
+    errors << "no \"Print redacted agent transcript\" step"
+  else
+    errors << "the print step is not gated on inputs.debug_output" unless printer["if"].to_s.include?("inputs.debug_output")
+    errors << "the print step is not continue-on-error" unless printer["continue-on-error"] == true
+    errors << "the print step does not load lib/redact.js" unless printer.dig("with", "script").to_s.include?("redact.js")
+  end
+
+  ctx = steps.find { |st| st["id"] == "context" }
+  [["context collection", ctx], ["the print step", printer]].each do |label, st|
+    next if st.nil?
+    unless (st["env"] || {})["REDACT_VALUES"].to_s.include?("inputs.redact_secrets")
+      errors << "#{label} does not pass inputs.redact_secrets to REDACT_VALUES"
     end
   end
 
   abort errors.join("\n") unless errors.empty?
-' "$actionYml" && pass "debug_output defaults to false and drives show_full_output" || fail "transcript wiring is wrong (see above)"
+' "$actionYml" && pass "transcript prints only via the redacting step" || fail "transcript wiring is wrong (see above)"
 
 # ---------------------------------------------------------------------------
 printf '== both Slack payloads carry the mention\n'
