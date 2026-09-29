@@ -37,18 +37,45 @@ not run a blanket `composer update vendor/package`.
 
 Patch level only
 ```bash
-composer update vendor/package --patch-only --with-dependencies
+composer update vendor/package --patch-only --with-dependencies --minimal-changes
 ```
 
 Specific version request
 ```bash
-composer update vendor/package --with vendor/package:1.0.1 --with-dependencies
+composer update vendor/package --with vendor/package:1.0.1 --with-dependencies --minimal-changes
 ```
 
-When Drupal core updates are required, ensure all related core packages are updated
+`--minimal-changes` (`-m`) is required on every update command in this step and must not be
+dropped. Drupal projects require `drupal/core-recommended` rather than `drupal/core`, so
+`drupal/core` is not a root requirement. Because `--with-dependencies` updates everything
+except root requirements, without `-m` these commands walk into core's entire dependency
+tree and bump unrelated packages (symfony/*, guzzle, pear/archive_tar) that have no
+advisory. Those belong in a planned core/dependency update pass, not a security PR.
+
+When Drupal core updates are required, ensure all related core packages are updated. List
+them by name; do **not** use a `"drupal/core-*"` pattern. Take the names from
+`composer.json` — commonly:
 ```bash
-composer update "drupal/core-*" --with-all-dependencies
+composer update drupal/core-recommended drupal/core-composer-scaffold drupal/core-project-message drupal/core-dev --with-all-dependencies --minimal-changes
 ```
+Include only the ones `composer.json` actually requires, plus `drupal/core` itself if it is
+required directly. Naming `drupal/core-recommended` is enough to carry `drupal/core` with
+it. Do not add `--patch-only` here: the fixed core releases require newer minor versions of
+their own dependencies, which `--patch-only` forbids, making the update unresolvable.
+
+If a named package is not present, Composer prints
+`Package "vendor/name" listed for update is not locked.` and carries on with the rest. That
+line is informational, not a failure — do not abort or treat the update as unsuccessful
+because of it.
+
+`-m` performs only the changes needed to satisfy constraints, with one exception: packages
+named explicitly in the command are always eligible to move. A pattern like
+`"drupal/core-*"` does **not** count as naming them — `-m` treats pattern-matched packages
+as transitive and refuses to move them, so the pattern form reports "Nothing to modify in
+lock file" and silently leaves core at the vulnerable version. That is why the core
+packages must be listed individually. If a targeted package still does not move, name the
+fixed version with the "Specific version request" form above rather than dropping `-m`; the
+re-audit in step 4 will catch a package that failed to move.
 
 **Reminder**: Never run `composer update` on a package unless you have confirmed it exists in composer.json.
 
@@ -74,7 +101,7 @@ For any transitive vulnerability that persists:
    ```bash
    composer update vendor/vulnerable-package
    ```
-   This will update it to the latest version allowed by the parent package's constraints without modifying composer.json.
+   This will update it to the latest version allowed by the parent package's constraints without modifying composer.json. `-m` is not needed here: it only affects partial updates that use `-w`/`-W`.
 
 4. If the update succeeds and resolves the vulnerability, include it in the PR description.
 
@@ -128,6 +155,7 @@ Save to `pr_body.md` with:
 - Breaking changes from changelogs (if any)
 - Conflicts requiring manual resolution (if any)
 - Transitive dependency vulnerabilities that were NOT updated. List the vulnerable package and which direct dependency should be updated upstream to resolve it.
+- Any other package whose version changed in `composer.lock` without having an advisory. Run `git diff -- composer.lock` and list every remaining difference, so reviewers do not have to diff the lock by hand. If there are none, say so. Compare the working tree against HEAD rather than a remote ref: nothing is staged or committed at this point, so HEAD is still the base branch, and fetching the base ref fails in checkouts that use `persist-credentials: false`.
 
 ### 8. Create Commit Message
 Save to `commit_message.txt` with a concise commit message following this format:
