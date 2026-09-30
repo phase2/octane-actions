@@ -15,7 +15,9 @@ token.
 1. Resolves the failed run (an explicit `run_id`, or the most recent failed run
    of `workflow_name`).
 2. Collects the failed job list and a **bounded** tail excerpt of each failed
-   job's log.
+   job's log, saves every job's full log from the failed run and from the last
+   green run of the same workflow to disk, and computes a Composer package
+   version comparison between the two.
 3. Runs Claude against `instructions.md`, an Octane-aware runbook.
 4. Claude **classifies before fixing**:
    - `code`: a local edit fixes it, so it produces a minimal fix.
@@ -36,13 +38,115 @@ arrives as a validated object on the `structured_output` output rather than as
 text to be parsed. Downstream steps gate on it. If you add a field to the schema,
 add it to `instructions.md` section 7 in the same commit; the two are a contract.
 
-### Logs are fetched by the agent, not inlined
+### The runbook depends on files in the consuming repository
 
-`additional_permissions: actions: read` exposes the `mcp__github_ci__*` tools, so
-the agent pulls the logs it needs for the jobs that failed. The prompt carries
-only a bounded excerpt (per-job line cap plus a 20k character total cap) as a
-starting point. Octane's nightly streams a full remote `composer install`;
-inlining that would be both a cost and a context-window problem.
+`instructions.md` is written for **octane-ci** specifically. Beyond that repo's
+`.octane-ci/` layout it now points the agent at progressive-disclosure reference
+material that lives there rather than here:
+
+```
+.claude/skills/octane-composer-patches/SKILL.md
+.claude/skills/octane-composer-patches/references/patch-sources.md
+.claude/skills/octane-composer-patches/references/rerolling.md
+.claude/skills/octane-consumers/references/parity-map.md
+.octane-ci/consumers/drupal/sync/docs/recommended-patches.md
+```
+
+**These land in octane-ci first.** Everything except `recommended-patches.md`
+arrives with phase2/octane-ci#405; until that merges, the paths do not exist on
+octane-ci's default branch, which is what the action checks out. The runbook
+therefore treats every one of these reads as optional and its own four-step
+summary as self-sufficient, so this action is safe to merge on its own.
+
+Keeping the depth there rather than in this runbook means a human running
+Claude Code in octane-ci gets the same guidance through the `Skill` tool, and
+the runbook stays a runbook. The cost is a cross-repo coupling: renaming or
+moving those files silently degrades the agent to whatever the runbook itself
+says. `--allowedTools` does **not** include `Skill`, so the agent reads them as
+plain files with `Read`; adding `Skill` would let it discover them on its own
+and is a reasonable future change, but has not been exercised in this workflow.
+
+### Logs are saved to disk, not inlined
+
+Before the agent runs, the action downloads the log of every non-skipped job in
+the failed run, and in the **baseline run** (the most recent successful run of
+the same workflow on the same branch that started earlier), to
+`$RUNNER_TEMP/autofix-logs/{failed-run,baseline-run}/NN-<job>.log`, with ANSI
+codes stripped. The directory is passed to Claude with `--add-dir` and the
+agent searches it with `Grep`, `Read` and `Bash`. It is outside the workspace,
+which only keeps the files themselves out of the change set and the PR commit.
+It is **not** a trust boundary: their content is untrusted build output that
+reaches an agent holding `Bash`, `Write` and `Edit`, exactly as the inlined
+excerpt always has. The mitigations are the ones below (untrusted-data framing,
+the change-set guard, human review); separating log analysis from the
+write-capable tools would be a larger design change.
+
+The prompt itself carries only a bounded excerpt (per-job line cap plus a 20k
+character total cap) and the dependency comparison below. Octane's nightly
+streams a full remote `composer install`; inlining that would be both a cost
+and a context-window problem.
+
+This replaces an earlier design in which the agent fetched logs itself through
+the `mcp__github_ci__*` tools. Those tools have never been observed to register
+on a `workflow_run` or `workflow_dispatch` trigger (`claude-code-action` only
+adds the server for PR entity events), so in practice the tail excerpt was the
+agent's only view. `additional_permissions: actions: read` and the tool names in
+`--allowedTools` are kept so they work unchanged if that ever changes.
+
+`$RUNNER_TEMP` is read from the environment inside the step, never from the
+`runner.temp` expression: in a container job the expression yields the host
+path, which does not exist where the step and the agent run.
+
+### The dependency comparison is precomputed
+
+`lib/log-context.js` extracts the resolved package versions from each run's
+Composer output across **all** jobs, not just the failed ones, and the prompt
+carries the diff. Resolution happens in a build job that usually passes; the
+job that fails is typically a later one.
+
+A run's job logs are read as one log, in job order, and every Composer
+operation is applied in sequence, so a later `composer update` lands on top of
+an earlier resolution. The result counts as a **full** inventory only when the
+log shows a from-scratch resolution (Composer's `No composer.lock file present`
+notice, which the nightly always hits), because only then does Composer print a
+`Locking` line for every package. Otherwise it is `PARTIAL`: with a lock file
+present Composer lists only what changed, so the diff reports only version
+changes to packages seen in both runs, never "added" or "removed". A missing
+baseline, missing Composer output, any job log that failed to download, a
+comparison that shares no packages, or a run where more than one job resolved
+from scratch (independent inventories on separate runners, which cannot be read
+as one history) is rendered as `UNKNOWN` in so many words, never as an empty
+diff. Jobs are listed with `filter: 'all'` and the latest attempt of each kept,
+so after "re-run failed jobs" the build job that passed in attempt 1 is still
+there, and they are read in the order they ran. Package names and versions are
+held to Composer's character set, because the comparison is inlined inside a
+prompt data tag and log text is untrusted.
+
+The baseline lookup lists the workflow's runs with **no** server-side filter
+and filters in code: same branch, `success`, and started (latest attempt,
+`run_started_at`) before the failed run was created, so a run re-run green
+after the failure does not qualify. The newest match wins, not the first seen,
+and paging is bounded at five pages of 100. GitHub's own run-list filters are
+deliberately not used: on 2026-09-28 both `branch=main` and a percent-encoded
+`created=<...` (which is how Octokit sends it) intermittently returned a
+truncated set that skipped the three weeks before the failure, while the
+unfiltered listing stayed correct. Because the bad results were intermittent,
+a passing dry run did not prove either filter safe. It deliberately does not use
+the API's `created` filter: GitHub returns a wrong result set for a
+percent-encoded `<`, which is how Octokit sends it (observed 2026-09-28: the
+first result was 19 days older than the true answer).
+
+This exists because of the 2026-09-26 Build Nightly failure: the agent saw only
+the `Test` job's tail, reported "no code, package, or Docker image change"
+between green and red nights, and classified it `infra`. In fact `twig/twig`
+had moved 3.29.0 to 3.30.0 and `drupal/ai` 1.4.9 to 1.5.0 that night, against
+Drupal core 11.4.7; core 11.4.8 fixed it the next day. For a build with no
+committed lock file, the commit SHA says nothing about whether dependencies
+changed.
+
+The helpers are pure and covered by `test-log-context.js` and
+`test-redact.js` (`node --test actions/ci-autofix/test-*.js`), which run in
+the Static Tests workflow.
 
 ### `allowed_bots: "*"` is mandatory here
 
@@ -51,11 +155,36 @@ throws unless the actor is a real user or is allow-listed. On a `workflow_run`
 trigger the actor is inherited from the triggering run, so a bot-initiated build
 would hard-fail without this.
 
+### Credentials are redacted deterministically
+
+The agent holds `Bash` in a job that usually has credentials within reach. In
+Octane's wrapper the checkout's SSH deploy key is persisted on disk, and it has
+to be: `create-pull-request` pushes over that SSH remote. Removing the key is
+therefore not an option, so nothing the agent is shown and nothing printed from
+its session is trusted to be clean. `lib/redact.js` runs at both points:
+
+- **Before the agent sees the logs.** Every job log is scrubbed before it is
+  written to disk or cut into the prompt excerpt.
+- **Before the transcript is printed.** See `debug_output` below.
+
+It removes the exact values the caller passes in `redact_secrets`, plus this
+action's own tokens (and, for a multi-line secret such as a key, each of its
+lines on its own). It also removes anything credential-shaped whether or not it
+is known: PEM private keys (an unterminated one to the end of the text), GitHub,
+Anthropic, Slack and AWS key formats, JWTs, `user:password@` in URLs, and
+`Authorization:` header values. GitHub's own masking is not relied on, because
+it covers registered secrets only and masks multi-line values on a best-effort
+basis. `test-redact.js` pins all of this.
+
+What it does not cover: a credential the agent sends out itself, for example
+through `WebFetch`, never touches the log. Redaction closes the path where a
+secret the agent read lands in the run log; it is not a sandbox.
+
 ### Log content is untrusted
 
 Build logs are attacker-influenceable in the general case. The prompt explicitly
-frames the log excerpt as data, not instructions. Keep that framing if you edit
-the prompt.
+frames the log excerpt, the dependency comparison and the saved log files as
+data, not instructions. Keep that framing if you edit the prompt.
 
 ### Two independent guards stop a runaway run
 
@@ -99,23 +228,57 @@ already dirty when the agent starts.
   uses: phase2/octane-actions/actions/ci-autofix@main
   with:
     anthropic_api_key: ${{ secrets.ANTHROPIC_DRUPAL_SECURITY_UPDATES_API_KEY }}
+    # Write path: opens the PR.
     github_token: ${{ steps.app-token.outputs.token }}
+    # Read path: Actions API and the agent's log tools.
+    actions_read_token: ${{ github.token }}
     run_id: ${{ github.event.workflow_run.id }}
     workflow_name: Build Nightly
     base_branch: ${{ github.event.repository.default_branch }}
     slack_bot_token: ${{ secrets.SLACK_DRUPAL_SECURITY_UPDATES_BOT_TOKEN }}
     slack_channel_id: ${{ vars.SLACK_CHANNEL_ID }}
+    slack_mention: '<@U0123ABCDEF>'
 ```
 
-The token **must** be a GitHub App token, not `GITHUB_TOKEN`, or the fix PR will
-not trigger its own CI, which is the only real proof the fix works.
+## The two tokens, and why there are two
+
+`github_token` **must** be a GitHub App token, not `GITHUB_TOKEN`, or the fix PR
+will not trigger its own CI, which is the only real proof the fix works.
+
+`actions_read_token` must carry `actions: read`, and `GITHUB_TOKEN` is the right
+choice for it.
+
+These are separate inputs because an App installation token only ever carries the
+permissions the **App itself** was granted. A job's `permissions:` block governs
+`GITHUB_TOKEN` and nothing else, so declaring `actions: read` there does not give
+an App token Actions access. When the two were one input, the App token reached
+`GET /repos/{owner}/{repo}/actions/runs/{id}` and GitHub answered:
+
+```
+403 Resource not accessible by integration
+x-accepted-github-permissions: actions=read
+```
+
+That 403 aborts the action on its first call, before Claude is ever invoked. If
+you see it, the read path is using the App token again.
+
+The caller must therefore declare, on the job:
+
+```yaml
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read     # for actions_read_token and the github_ci MCP tools
+```
 
 ## Inputs
 
 | Input | Default | Description |
 |---|---|---|
 | `anthropic_api_key` | *(required)* | Anthropic API key |
-| `github_token` | `github.token` | Reads run logs and opens the PR. Use an App token. |
+| `github_token` | `github.token` | **Write path.** Opens the fix PR and supersedes prior ones. Use an App token. |
+| `actions_read_token` | `github.token` | **Read path.** Actions API and the agent's `github_ci` log tools. Needs `actions: read` from the calling job. |
 | `run_id` | `''` | Failed run to analyze. Empty means latest failed run of `workflow_name`. |
 | `workflow_name` | `Build Nightly` | Workflow to search when `run_id` is empty |
 | `working_directory` | `.` | Directory to operate in |
@@ -132,7 +295,34 @@ not trigger its own CI, which is the only real proof the fix works.
 | `max_changed_files` | `25` | Refuse to open a PR above this many changed files |
 | `slack_bot_token` | `''` | Slack bot token (needs `slack_channel_id`) |
 | `slack_channel_id` | `''` | Slack channel (needs `slack_bot_token`) |
+| `slack_mention` | `''` | Mention prepended to every notification, e.g. `<@U0123ABC>`, `<!subteam^S0123ABC>` for a user group, or `<!here>`. Sanitised before use. |
 | `slack_errors` | `false` | Fail the workflow if Slack notification fails |
+| `debug_output` | `false` | Print the agent turn-by-turn transcript after the run, **redacted**. See below. |
+| `redact_secrets` | `''` | Newline-separated extra secret values to remove from the saved logs and the printed transcript, on top of this action's own tokens. Pass any credential the job holds that the agent could reach, such as a checkout deploy key. |
+
+### Enabling the transcript safely
+
+`debug_output` prints the transcript from `claude-code-action`'s execution file
+in a separate step after the agent finishes, with every string passed through
+`lib/redact.js`. The action's own live stream (`show_full_output`) is hardcoded
+off, because it prints as it happens and nothing can filter it. See
+"Credentials are redacted deterministically" above.
+
+One way around that remains, and this action cannot close it.
+`claude-code-action` computes the live stream as an OR:
+
+```ts
+const isDebugMode = process.env.ACTIONS_STEP_DEBUG === "true";
+const showFullOutput = options.showFullOutput === "true" || isDebugMode;
+```
+
+So a workflow that sets `ACTIONS_STEP_DEBUG` in an `env:` block gets the RAW,
+unredacted transcript. That is an easy mistake to make, because GitHub's own
+documentation tells you to create an `ACTIONS_STEP_DEBUG` secret or variable to
+enable debug logging; mirroring it into `env:` silently enables this too. Do
+not. (A GitHub "re-run with debug logging" does not trigger it as of
+2026-09-18, because that sets `RUNNER_DEBUG`; that is upstream bug
+anthropics/claude-code-action#1604, not a guarantee.)
 
 ## Outputs
 

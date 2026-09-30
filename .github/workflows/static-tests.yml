@@ -47,6 +47,36 @@ jobs:
       - name: Test PR body assembly
         run: bash actions/drupal-security-update/test-pr-body.sh
 
+  ci-autofix-notify:
+    name: ci-autofix token split and Slack mention
+    runs-on: self-hosted
+      image: ghcr.io/phase2/docker-cli:php8.4
+      # Default actions must run as user 1000
+      options: --user 1000
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v7
+        with:
+          # This test executes a shell block it reads out of action.yml, so
+          # leave no token in .git/config for that code to find.
+          persist-credentials: false
+      - name: Test notify normalisation and token wiring
+        run: bash actions/ci-autofix/test-notify.sh
+
+  ci-autofix-log-context:
+    name: ci-autofix dependency comparison and redaction
+    runs-on: self-hosted
+      image: ghcr.io/phase2/docker-cli:php8.4
+      # Default actions must run as user 1000
+      options: --user 1000
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Test log parsing, the dependency diff and credential redaction
+        run: node --test actions/ci-autofix/test-log-context.js actions/ci-autofix/test-redact.js
+
   soc-check-actions:
     name: require-checks and attest-check logic
     runs-on: self-hosted
@@ -64,3 +94,4 @@ jobs:
           node-version: 24
       - name: Test gate evaluation and evidence rendering
         run: node --test --test-reporter=spec actions/require-checks/test-evaluate.js actions/attest-check/test-render.js
+
