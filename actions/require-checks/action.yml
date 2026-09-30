@@ -1,0 +1,174 @@
+name: 'Require checks'
+description: 'Gate a deployment on named requirement groups, each satisfied by any one of several check runs'
+author: 'Phase2'
+
+branding:
+  icon: 'lock'
+  color: 'blue'
+
+inputs:
+  requirements:
+    description: |
+      Requirement groups, one per line, as "<group>: <check> | <check> | ...".
+      A group is satisfied when ANY of its checks concluded success for the
+      commit. Only `success` counts -- `neutral` and `skipped` do not.
+      Prefix a check with a GitHub App id, as in `15368/run-tests`, to accept
+      it only from that app. App ids are listed in the gate's summary.
+    required: true
+  sha:
+    description: 'Commit to evaluate. Defaults to the commit being built.'
+    required: false
+    default: ${{ github.sha }}
+  github_token:
+    description: 'Token used to read check runs and, if enabled, write the gate check.'
+    required: false
+    default: ${{ github.token }}
+  waiver_name_prefix:
+    description: |
+      Checks whose name starts with this prefix are treated as waivers: they
+      satisfy the gate but are reported as WAIVED rather than satisfied, and
+      are listed in the waived_requirements output.
+    required: false
+    default: 'waiver-'
+  gate_check_name:
+    description: |
+      Name of the check run recording this gate decision. Set to an empty
+      string to skip recording it, which also removes the need for checks:write.
+    required: false
+    default: 'deployment-gate'
+
+outputs:
+  satisfied:
+    description: "'true' when every requirement group was satisfied or waived."
+    value: ${{ steps.gate.outputs.satisfied }}
+  waived_requirements:
+    description: 'Comma-separated names of groups that passed only because of a waiver.'
+    value: ${{ steps.gate.outputs.waived_requirements }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Evaluate required checks
+      id: gate
+      uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        REQUIREMENTS: ${{ inputs.requirements }}
+        TARGET_SHA: ${{ inputs.sha }}
+        WAIVER_PREFIX: ${{ inputs.waiver_name_prefix }}
+        GATE_CHECK_NAME: ${{ inputs.gate_check_name }}
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const { evaluate } = require(`${process.env.ACTION_PATH}/evaluate.js`);
+
+          const sha = process.env.TARGET_SHA;
+          const requirements = process.env.REQUIREMENTS;
+          const waiverPrefix = process.env.WAIVER_PREFIX || 'waiver-';
+          const gateCheckName = (process.env.GATE_CHECK_NAME || '').trim();
+
+          // filter=all is explicit for the audit trail: it keeps every attempt,
+          // including superseded ones. It is NOT what makes latest-wins work --
+          // filter=latest selects the newest run per check SUITE, and each
+          // workflow re-run creates a new suite, so it does not collapse
+          // re-runs of the same check name. evaluate.js reduces by name.
+          const checkRuns = await github.paginate(
+            github.rest.checks.listForRef,
+            { ...context.repo, ref: sha, filter: 'all', per_page: 100 },
+          );
+
+          const result = evaluate({ checkRuns, requirements, waiverPrefix });
+
+          const STATE_LABEL = {
+            satisfied: 'satisfied',
+            waived: '**WAIVED**',
+            pending: 'pending',
+            unsatisfied: 'NOT SATISFIED',
+          };
+
+          const lines = [];
+          lines.push(`### Deployment gate: ${result.satisfied ? 'PASSED' : 'REFUSED'}`);
+          lines.push('');
+          lines.push(`Commit \`${sha}\``);
+          lines.push('');
+          lines.push('| requirement | result | satisfied by | completed | run |');
+          lines.push('| --- | --- | --- | --- | --- |');
+          for (const g of result.groups) {
+            const by = g.satisfiedBy;
+            lines.push(
+              `| ${g.name} | ${STATE_LABEL[g.state]} | ${by ? `\`${by.alternative}\`` : '-'} ` +
+              `| ${by ? by.run.completed_at : '-'} ` +
+              `| ${by && by.run.html_url ? `[run](${by.run.html_url})` : '-'} |`,
+            );
+          }
+
+          if (result.waived.length > 0) {
+            lines.push('');
+            lines.push(
+              `> **${result.waived.length} requirement(s) passed only by waiver: ` +
+              `${result.waived.join(', ')}.** A waiver records an accepted exception, ` +
+              'not a satisfied control.',
+            );
+          }
+
+          // Every attempt recorded against any named check, so a reviewer can see
+          // superseded failures rather than only the run that happened to win.
+          const attempts = result.groups.flatMap((g) => g.attempts);
+          if (attempts.length > 0) {
+            lines.push('');
+            lines.push('<details><summary>All check runs considered</summary>');
+            lines.push('');
+            lines.push('| check | app | conclusion | completed |');
+            lines.push('| --- | --- | --- | --- |');
+            for (const a of attempts.sort((x, y) => String(x.name).localeCompare(String(y.name)))) {
+              const app = a.app ? `${a.app.slug} (${a.app.id})` : '-';
+              lines.push(`| \`${a.name}\` | ${app} | ${a.conclusion || a.status} | ${a.completed_at || 'in progress'} |`);
+            }
+            lines.push('');
+            lines.push('</details>');
+          }
+
+          const markdown = lines.join('\n');
+          await core.summary.addRaw(markdown).write();
+
+          core.setOutput('satisfied', String(result.satisfied));
+          core.setOutput('waived_requirements', result.waived.join(','));
+
+          // Recording the decision as a check run makes it queryable through the
+          // Checks API alongside the checks it evaluated. Created with
+          // GITHUB_TOKEN, it joins an existing github-actions check suite on the
+          // commit, so the GitHub UI does not list it on its own.
+          if (gateCheckName) {
+            const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+            try {
+              await github.rest.checks.create({
+                ...context.repo,
+                name: gateCheckName,
+                head_sha: sha,
+                status: 'completed',
+                conclusion: result.satisfied ? 'success' : 'failure',
+                started_at: now,
+                completed_at: now,
+                details_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                external_id: `soc-gate:${result.waived.join(',')}`,
+                output: {
+                  title: result.satisfied
+                    ? (result.waived.length ? `Passed with ${result.waived.length} waiver(s)` : 'All requirements satisfied')
+                    : 'Deployment refused',
+                  summary: markdown.slice(0, 65535),
+                },
+              });
+            } catch (e) {
+              // A missing checks:write should not silently turn the gate green,
+              // but it also should not fail a deploy the gate approved.
+              core.warning(`Could not record the ${gateCheckName} check: ${e.status} ${e.message}`);
+            }
+          }
+
+          if (!result.satisfied) {
+            const failing = result.groups
+              .filter((g) => g.state === 'pending' || g.state === 'unsatisfied')
+              .map((g) => `${g.name} (${g.state})`)
+              .join(', ');
+            core.setFailed(`Deployment refused for ${sha}. Unsatisfied requirements: ${failing}.`);
+          }

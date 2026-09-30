@@ -1,0 +1,107 @@
+name: 'Attest check'
+description: 'Record a manual attestation or waiver as a check run, with a fixed evidence schema'
+author: 'Phase2'
+
+branding:
+  icon: 'clipboard'
+  color: 'blue'
+
+inputs:
+  check_name:
+    description: |
+      Name of the check run to create. The name carries the meaning: a gate
+      treats `waiver-<group>` as an accepted exception and anything else as a
+      satisfied requirement.
+    required: true
+  statement:
+    description: 'What is being asserted, or why the exception is acceptable. Required.'
+    required: true
+  evidence_url:
+    description: 'Link to supporting evidence -- a test run, a ticket, a report.'
+    required: false
+    default: ''
+  evidence_label:
+    description: 'Link text for evidence_url.'
+    required: false
+    default: 'Evidence'
+  sha:
+    description: 'Commit the attestation binds to.'
+    required: false
+    default: ${{ github.sha }}
+  github_token:
+    description: 'Token with checks:write.'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  check_run_id:
+    description: 'Numeric id of the created check run.'
+    value: ${{ steps.attest.outputs.check_run_id }}
+  check_run_url:
+    description: 'HTML URL of the created check run.'
+    value: ${{ steps.attest.outputs.check_run_url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Record attestation as a check run
+      id: attest
+      uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        CHECK_NAME: ${{ inputs.check_name }}
+        STATEMENT: ${{ inputs.statement }}
+        EVIDENCE_URL: ${{ inputs.evidence_url }}
+        EVIDENCE_LABEL: ${{ inputs.evidence_label }}
+        TARGET_SHA: ${{ inputs.sha }}
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const { renderEvidence } = require(`${process.env.ACTION_PATH}/render.js`);
+
+          const checkName = (process.env.CHECK_NAME || '').trim();
+          if (!checkName) throw new Error('check_name is required');
+
+          const sha = process.env.TARGET_SHA;
+          const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+          const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+          // context.actor is the account that triggered this run. It is the only
+          // record of who asserted this: the Checks API stores no creator.
+          const { title, summary, externalId } = renderEvidence({
+            actor: context.actor,
+            sha,
+            statement: process.env.STATEMENT,
+            evidenceUrl: process.env.EVIDENCE_URL,
+            evidenceLabel: process.env.EVIDENCE_LABEL,
+            runUrl,
+            eventName: context.eventName,
+            timestamp,
+            checkName,
+          });
+
+          const res = await github.rest.checks.create({
+            ...context.repo,
+            name: checkName,
+            head_sha: sha,
+            status: 'completed',
+            // An attestation exists to assert that something holds. To record
+            // that it does not hold, let the automated check fail instead --
+            // a "failed attestation" is just an absent one.
+            conclusion: 'success',
+            started_at: timestamp,
+            completed_at: timestamp,
+            details_url: runUrl,
+            external_id: externalId,
+            output: { title, summary: summary.slice(0, 65535) },
+          });
+
+          core.info(`Recorded "${checkName}" for ${sha} -> ${res.data.html_url}`);
+          core.setOutput('check_run_id', String(res.data.id));
+          core.setOutput('check_run_url', res.data.html_url);
+
+          await core.summary
+            .addHeading(`Recorded: ${checkName}`)
+            .addEOL()
+            .addRaw(summary)
+            .write();
