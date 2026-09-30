@@ -32,10 +32,14 @@ jobs:
 
   drupal-security-update-pr-body:
     name: drupal-security-update PR body assembly
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    container:
+      image: ghcr.io/phase2/docker-cli:php8.4
+      # Default actions must run as user 1000
+      options: --user 1000
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # This test executes a shell block it reads out of action.yml, so
           # leave no token in .git/config for that code to find.
@@ -45,10 +49,14 @@ jobs:
 
   ci-autofix-notify:
     name: ci-autofix token split and Slack mention
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    container:
+      image: ghcr.io/phase2/docker-cli:php8.4
+      # Default actions must run as user 1000
+      options: --user 1000
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # This test executes a shell block it reads out of action.yml, so
           # leave no token in .git/config for that code to find.
@@ -58,11 +66,34 @@ jobs:
 
   ci-autofix-log-context:
     name: ci-autofix dependency comparison and redaction
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    container:
+      image: ghcr.io/phase2/docker-cli:php8.4
+      # Default actions must run as user 1000
+      options: --user 1000
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Test log parsing, the dependency diff and credential redaction
         run: node --test actions/ci-autofix/test-log-context.js actions/ci-autofix/test-redact.js
+
+  soc-check-actions:
+    name: require-checks and attest-check logic
+    runs-on: self-hosted
+    container:
+      image: ghcr.io/phase2/docker-cli:php8.4
+      # Default actions must run as user 1000
+      options: --user 1000
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Test gate evaluation and evidence rendering
+        run: node --test --test-reporter=spec actions/require-checks/test-evaluate.js actions/attest-check/test-render.js
+
