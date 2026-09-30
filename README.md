@@ -211,6 +211,22 @@ required tools expected in runner environment.
 
 Gates a deployment on check runs already recorded against the commit, rather than re-running them. Fails the step when any group is unsatisfied or pending. Requires `checks: write` unless `gate_check_name` is empty.
 
+Common app ids for the `<app_id>/<check>` prefix:
+
+| App | App id | Checks |
+| --- | --- | --- |
+| GitHub Actions | `15368` | Workflow jobs, and checks created with `GITHUB_TOKEN` such as those from `attest-check` |
+| Diffy | `39097` | Diffy visual regression results |
+
+To find the id for another app, use the [GitHub apps API](https://docs.github.com/en/rest/apps/apps?apiVersion=2026-03-10#get-an-app)
+and get data via its slug (the name in its `github.com/apps/<slug>` URL).
+
+Using the GitHub CLI, it can be fetched via
+
+```
+gh api apps/<slug> --jq .id
+```
+
 ---
 
 ## attest-check
