@@ -50,6 +50,7 @@ jobs:
   ci-autofix-notify:
     name: ci-autofix token split and Slack mention
     runs-on: self-hosted
+    container:
       image: ghcr.io/phase2/docker-cli:php8.4
       # Default actions must run as user 1000
       options: --user 1000
@@ -66,6 +67,7 @@ jobs:
   ci-autofix-log-context:
     name: ci-autofix dependency comparison and redaction
     runs-on: self-hosted
+    container:
       image: ghcr.io/phase2/docker-cli:php8.4
       # Default actions must run as user 1000
       options: --user 1000
