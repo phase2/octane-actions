@@ -32,11 +32,7 @@ jobs:
 
   drupal-security-update-pr-body:
     name: drupal-security-update PR body assembly
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/phase2/docker-cli:php8.4
-      # Default actions must run as user 1000
-      options: --user 1000
+    runs-on: ubuntu-latest
     steps:
       - name: Check out the repo
         uses: actions/checkout@v7
@@ -49,11 +45,7 @@ jobs:
 
   ci-autofix-notify:
     name: ci-autofix token split and Slack mention
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/phase2/docker-cli:php8.4
-      # Default actions must run as user 1000
-      options: --user 1000
+    runs-on: ubuntu-latest
     steps:
       - name: Check out the repo
         uses: actions/checkout@v7
@@ -66,11 +58,7 @@ jobs:
 
   ci-autofix-log-context:
     name: ci-autofix dependency comparison and redaction
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/phase2/docker-cli:php8.4
-      # Default actions must run as user 1000
-      options: --user 1000
+    runs-on: ubuntu-latest
     steps:
       - name: Check out the repo
         uses: actions/checkout@v7
@@ -81,11 +69,7 @@ jobs:
 
   soc-check-actions:
     name: require-checks and attest-check logic
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/phase2/docker-cli:php8.4
-      # Default actions must run as user 1000
-      options: --user 1000
+    runs-on: ubuntu-latest
     steps:
       - name: Check out the repo
         uses: actions/checkout@v7
