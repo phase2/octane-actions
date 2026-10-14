@@ -63,7 +63,7 @@ function renderEvidence(fields) {
   return {
     title: `Asserted by attest-check triggered by @${actor}`,
     summary,
-    externalId: `attest-check:${checkName || ''}`,
+    externalId: `octane-actions/attest-check:${checkName || ''}`,
   };
 }
 

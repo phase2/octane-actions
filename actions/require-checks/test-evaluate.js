@@ -38,7 +38,7 @@ test('rejects malformed requirements', () => {
 });
 
 test('isAttestation recognizes attest-check runs by external_id', () => {
-  assert.equal(isAttestation({ external_id: 'attest-check:manual-test-evidence' }), true);
+  assert.equal(isAttestation({ external_id: 'octane-actions/attest-check:manual-test-evidence' }), true);
   assert.equal(isAttestation({ external_id: '152e3179-103c-55fc-8b52-c4431734bfdd' }), false);
   assert.equal(isAttestation({ external_id: null }), false);
 });

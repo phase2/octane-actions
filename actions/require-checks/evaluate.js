@@ -69,7 +69,7 @@ function parseAlternative(alternative) {
  * Whether a run was recorded by attest-check rather than produced by a job.
  */
 function isAttestation(run) {
-  return typeof (run && run.external_id) === 'string' && run.external_id.startsWith('attest-check:');
+  return typeof (run && run.external_id) === 'string' && run.external_id.startsWith('octane-actions/attest-check:');
 }
 
 /**

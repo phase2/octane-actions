@@ -58,5 +58,5 @@ test('a multi-line statement cannot break out of the evidence block', () => {
 });
 
 test('external id is namespaced by check name', () => {
-  assert.equal(renderEvidence(base).externalId, 'attest-check:manual-test-evidence');
+  assert.equal(renderEvidence(base).externalId, 'octane-actions/attest-check:manual-test-evidence');
 });

@@ -165,7 +165,7 @@ runs:
                 conclusion: result.satisfied ? 'success' : 'failure',
                 started_at: now,
                 completed_at: now,
-                external_id: `require-checks:${result.waived.join(',')}`,
+                external_id: `octane-actions/require-checks:${result.waived.join(',')}`,
                 output: {
                   title: result.satisfied
                     ? (result.waived.length ? `Passed with ${result.waived.length} waiver(s)` : 'All requirements satisfied')
