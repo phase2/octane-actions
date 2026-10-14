@@ -116,6 +116,31 @@ test('a pending alternative does not block when another already passed', () => {
   assert.equal(res.satisfied, true);
 });
 
+test('an in-flight re-run supersedes an earlier pass', () => {
+  const res = evaluate({
+    checkRuns: [
+      run('run-tests', 'success', '2026-01-01T00:00:00Z'),
+      run('run-tests', null, null, { status: 'in_progress' }),
+    ],
+    requirements: 'testing: run-tests',
+  });
+  assert.equal(res.groups[0].state, 'pending');
+  assert.deepEqual(res.groups[0].pending, ['run-tests']);
+});
+
+test('another alternative satisfies the group while a re-run is in flight', () => {
+  const res = evaluate({
+    checkRuns: [
+      run('run-tests', 'success', '2026-01-01T00:00:00Z'),
+      run('run-tests', null, null, { status: 'in_progress' }),
+      run('manual-test-evidence', 'success', '2026-01-01T01:00:00Z'),
+    ],
+    requirements: 'testing: run-tests | manual-test-evidence',
+  });
+  assert.equal(res.groups[0].state, 'satisfied');
+  assert.equal(res.groups[0].satisfiedBy.alternative, 'manual-test-evidence');
+});
+
 test('only success counts: neutral and skipped do not satisfy', () => {
   for (const conclusion of ['neutral', 'skipped', 'cancelled', 'timed_out', 'action_required']) {
     const res = evaluate({
@@ -163,6 +188,19 @@ test('a real pass is preferred over an available waiver', () => {
     requirements: 'vulnerability: dependency-audit | waiver-vulnerability',
   });
   assert.equal(res.groups[0].state, 'satisfied');
+  assert.deepEqual(res.waived, []);
+});
+
+test('a real pass is preferred over a waiver listed before it', () => {
+  const res = evaluate({
+    checkRuns: [
+      run('waiver-vulnerability', 'success', '2026-01-01T01:00:00Z'),
+      run('dependency-audit', 'success', '2026-01-01T00:00:00Z'),
+    ],
+    requirements: 'vulnerability: waiver-vulnerability | dependency-audit',
+  });
+  assert.equal(res.groups[0].state, 'satisfied');
+  assert.equal(res.groups[0].satisfiedBy.alternative, 'dependency-audit');
   assert.deepEqual(res.waived, []);
 });
 

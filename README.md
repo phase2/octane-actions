@@ -189,7 +189,7 @@ required tools expected in runner environment.
 > Usage:
 * `phase2/octane-actions/actions/require-checks@main`
 > Inputs:
-* `requirements`: (required) Requirement groups, one per line, as `<group>: <check> | <check> | ...`. A group is satisfied when any of its checks concluded `success` for the commit. Prefix a check with a GitHub App id (`<app_id>/<check>`) to accept it only from that app; the gate's summary lists the app id of each check it considered.
+* `requirements`: (required) Requirement groups, one per line, as `<group>: <check> | <check> | ...`. A group is satisfied when any of its checks concluded `success` for the commit. Prefix a check with a GitHub App id (`<app_id>/<check>`) to accept it only from that app; the gate's summary lists the app id of each check it considered. When several checks pass, the first one listed is reported as satisfying the group. Order checks based on which one you want recorded if multiple pass. Waivers are only used when no other check passed, regardless of position.
 * `sha`: Commit to evaluate. Defaults to `github.sha`
 * `github_token`: Token to read check runs and write the gate check. Defaults to `github.token`
 * `waiver_name_prefix`: Checks with this prefix satisfy a group but are reported as WAIVED. Defaults to `waiver-`

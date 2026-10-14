@@ -101,6 +101,7 @@ function evaluate({ checkRuns, requirements, waiverPrefix = DEFAULT_WAIVER_PREFI
 
   const results = groups.map((group) => {
     let satisfiedBy = null;
+    let waivedBy = null;
     const pending = [];
 
     const attempts = new Map();
@@ -111,15 +112,27 @@ function evaluate({ checkRuns, requirements, waiverPrefix = DEFAULT_WAIVER_PREFI
       for (const r of runs) attempts.set(r.id, r);
       const latest = latestCompleted(runs);
 
-      if (latest && latest.conclusion === 'success') {
-        satisfiedBy = { alternative, run: latest };
-        break;
+      // An in-flight re-run supersedes any earlier result for this check, so
+      // the alternative is pending until it completes. Another alternative can
+      // still satisfy the group.
+      if (runs.some((r) => r.status !== 'completed')) {
+        pending.push(alternative);
+        continue;
       }
+
       // Only `success` counts. GitHub's own required-status-check rules also
       // accept `neutral` and `skipped`; for a deployment gate a skipped test is
       // not evidence that anything was tested.
-      if (runs.some((r) => r.status !== 'completed')) pending.push(alternative);
+      if (latest && latest.conclusion === 'success') {
+        // A real pass outranks a waiver regardless of the order listed.
+        if (!name.startsWith(waiverPrefix)) {
+          satisfiedBy = { alternative, run: latest };
+          break;
+        }
+        if (!waivedBy) waivedBy = { alternative, run: latest };
+      }
     }
+    if (!satisfiedBy) satisfiedBy = waivedBy;
 
     const isWaiver = Boolean(satisfiedBy) && parseAlternative(satisfiedBy.alternative).name.startsWith(waiverPrefix);
     let state;
