@@ -68,7 +68,7 @@ runs:
       with:
         github-token: ${{ inputs.github_token }}
         script: |
-          const { evaluate } = require(`${process.env.ACTION_PATH}/evaluate.js`);
+          const { evaluate, isAttestation } = require(`${process.env.ACTION_PATH}/evaluate.js`);
 
           const sha = process.env.TARGET_SHA;
           const requirements = process.env.REQUIREMENTS;
@@ -94,6 +94,14 @@ runs:
             unsatisfied: 'NOT SATISFIED',
           };
 
+          // A run recorded by attest-check satisfied this, not a job completing.
+          // It may be manual or automated; its own summary says which.
+          const attestationNote = (run) => {
+            if (!isAttestation(run)) return '';
+            const title = run.output && run.output.title ? `: ${run.output.title}` : '';
+            return ` (attestation${title})`;
+          };
+
           const lines = [];
           lines.push(`### Deployment gate: ${result.satisfied ? 'PASSED' : 'REFUSED'}`);
           lines.push('');
@@ -104,7 +112,7 @@ runs:
           for (const g of result.groups) {
             const by = g.satisfiedBy;
             lines.push(
-              `| ${g.name} | ${STATE_LABEL[g.state]} | ${by ? `\`${by.alternative}\`` : '-'} ` +
+              `| ${g.name} | ${STATE_LABEL[g.state]} | ${by ? `\`${by.alternative}\`${attestationNote(by.run)}` : '-'} ` +
               `| ${by ? by.run.completed_at : '-'} ` +
               `| ${by && by.run.html_url ? `[run](${by.run.html_url})` : '-'} |`,
             );
@@ -130,7 +138,7 @@ runs:
             lines.push('| --- | --- | --- | --- |');
             for (const a of attempts.sort((x, y) => String(x.name).localeCompare(String(y.name)))) {
               const app = a.app ? `${a.app.slug} (${a.app.id})` : '-';
-              lines.push(`| \`${a.name}\` | ${app} | ${a.conclusion || a.status} | ${a.completed_at || 'in progress'} |`);
+              lines.push(`| \`${a.name}\`${attestationNote(a)} | ${app} | ${a.conclusion || a.status} | ${a.completed_at || 'in progress'} |`);
             }
             lines.push('');
             lines.push('</details>');
@@ -157,8 +165,7 @@ runs:
                 conclusion: result.satisfied ? 'success' : 'failure',
                 started_at: now,
                 completed_at: now,
-                details_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-                external_id: `soc-gate:${result.waived.join(',')}`,
+                external_id: `require-checks:${result.waived.join(',')}`,
                 output: {
                   title: result.satisfied
                     ? (result.waived.length ? `Passed with ${result.waived.length} waiver(s)` : 'All requirements satisfied')

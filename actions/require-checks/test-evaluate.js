@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseRequirements, parseAlternative, latestCompleted, evaluate } = require('./evaluate.js');
+const { parseRequirements, parseAlternative, isAttestation, latestCompleted, evaluate } = require('./evaluate.js');
 
 let nextId = 1;
 function run(name, conclusion, completedAt, extra = {}) {
@@ -35,6 +35,12 @@ test('rejects malformed requirements', () => {
   assert.throws(() => parseRequirements('testing:'), /lists no checks/);
   assert.throws(() => parseRequirements(''), /requirements is empty/);
   assert.throws(() => parseRequirements('a: x\na: y'), /more than once/);
+});
+
+test('isAttestation recognizes attest-check runs by external_id', () => {
+  assert.equal(isAttestation({ external_id: 'attest-check:manual-test-evidence' }), true);
+  assert.equal(isAttestation({ external_id: '152e3179-103c-55fc-8b52-c4431734bfdd' }), false);
+  assert.equal(isAttestation({ external_id: null }), false);
 });
 
 test('latestCompleted ignores in-flight runs', () => {

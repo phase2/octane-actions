@@ -99,7 +99,6 @@ runs:
             conclusion: 'success',
             started_at: timestamp,
             completed_at: timestamp,
-            details_url: runUrl,
             external_id: externalId,
             output: { title, summary: summary.slice(0, 65535) },
           });

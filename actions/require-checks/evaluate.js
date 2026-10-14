@@ -66,6 +66,13 @@ function parseAlternative(alternative) {
 }
 
 /**
+ * Whether a run was recorded by attest-check rather than produced by a job.
+ */
+function isAttestation(run) {
+  return typeof (run && run.external_id) === 'string' && run.external_id.startsWith('attest-check:');
+}
+
+/**
  * The most recently completed run for a check name.
  *
  * This cannot be delegated to the API. `filter=latest` selects the newest run
@@ -158,4 +165,4 @@ function evaluate({ checkRuns, requirements, waiverPrefix = DEFAULT_WAIVER_PREFI
   };
 }
 
-module.exports = { parseRequirements, parseAlternative, latestCompleted, evaluate, DEFAULT_WAIVER_PREFIX };
+module.exports = { parseRequirements, parseAlternative, isAttestation, latestCompleted, evaluate, DEFAULT_WAIVER_PREFIX };

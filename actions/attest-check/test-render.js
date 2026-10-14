@@ -15,7 +15,7 @@ const base = {
 test('records who asserted, when, and against which commit', () => {
   const { title, summary } = renderEvidence(base);
   assert.match(title, /@tekante/);
-  assert.match(summary, /\| Asserted by \| @tekante \|/);
+  assert.match(summary, /\| Triggered by actor \| @tekante \|/);
   assert.match(summary, /\| Recorded at \| 2026-09-04T19:00:00Z \|/);
   assert.match(summary, /`abc123`/);
   assert.match(summary, /> Manual regression suite v3 executed/);
@@ -58,5 +58,5 @@ test('a multi-line statement cannot break out of the evidence block', () => {
 });
 
 test('external id is namespaced by check name', () => {
-  assert.equal(renderEvidence(base).externalId, 'soc-evidence:manual-test-evidence');
+  assert.equal(renderEvidence(base).externalId, 'attest-check:manual-test-evidence');
 });

@@ -40,7 +40,7 @@ function renderEvidence(fields) {
   } = fields;
 
   const rows = [
-    ['Asserted by', `@${actor}`],
+    ['Triggered by actor', `@${actor}`],
     ['Recorded at', timestamp],
     ['Commit', `\`${sha}\``],
     ['Evidence', renderEvidenceLink(evidenceUrl, evidenceLabel)],
@@ -61,9 +61,9 @@ function renderEvidence(fields) {
   ].join('\n');
 
   return {
-    title: `Asserted by @${actor}`,
+    title: `Asserted by attest-check triggered by @${actor}`,
     summary,
-    externalId: `soc-evidence:${checkName || ''}`,
+    externalId: `attest-check:${checkName || ''}`,
   };
 }
 

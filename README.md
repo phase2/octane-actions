@@ -254,7 +254,9 @@ gh api apps/<slug> --jq .id
     evidence_label: Test results
 ```
 
-Records a manual attestation or waiver as a successful check run, including who triggered it, so it can satisfy a `require-checks` group.
+Records an attestation or waiver as a successful check run, including who triggered it, so it can satisfy a `require-checks` group. It can be run manually or from a workflow step.
+
+Attestations share the GitHub Actions app id (`15368`) with workflow jobs, so an app id prefix cannot tell them apart, and an attestation named after a job satisfies requirements for that job. Do not name an attestation after an existing check to stand in for it. The `require-checks` summary marks runs recorded by this action as attestations.
 
 ---
 
