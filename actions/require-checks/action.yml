@@ -48,11 +48,19 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    # Inside a container job the github.action_path expression is the HOST
+    # path, and within github-script GITHUB_ACTION_PATH names that action
+    # rather than this one. $GITHUB_ACTION_PATH in a run step is reliable.
+    - name: Resolve action path
+      id: action-path
+      shell: bash
+      run: echo "path=$GITHUB_ACTION_PATH" >> "$GITHUB_OUTPUT"
+
     - name: Evaluate required checks
       id: gate
       uses: actions/github-script@v9
       env:
-        ACTION_PATH: ${{ github.action_path }}
+        ACTION_PATH: ${{ steps.action-path.outputs.path }}
         REQUIREMENTS: ${{ inputs.requirements }}
         TARGET_SHA: ${{ inputs.sha }}
         WAIVER_PREFIX: ${{ inputs.waiver_name_prefix }}
