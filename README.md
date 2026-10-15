@@ -185,6 +185,81 @@ required tools expected in runner environment.
 
 ---
 
+## require-checks
+> Usage:
+* `phase2/octane-actions/actions/require-checks@main`
+> Inputs:
+* `requirements`: (required) Requirement groups, one per line, as `<group>: <check> | <check> | ...`. A group is satisfied when any of its checks concluded `success` for the commit. Prefix a check with a GitHub App id (`<app_id>/<check>`) to accept it only from that app; the gate's summary lists the app id of each check it considered. When several checks pass, the first one listed is reported as satisfying the group. Order checks based on which one you want recorded if multiple pass. Waivers are only used when no other check passed, regardless of position.
+* `sha`: Commit to evaluate. Defaults to `github.sha`
+* `github_token`: Token to read check runs and write the gate check. Defaults to `github.token`
+* `waiver_name_prefix`: Checks with this prefix satisfy a group but are reported as WAIVED. Defaults to `waiver-`
+* `gate_check_name`: Name of the check run recording the decision. Empty skips it (and the need for `checks:write`). Defaults to `deployment-gate`
+
+> Outputs:
+* `satisfied`: `'true'` when every group was satisfied or waived
+* `waived_requirements`: Comma-separated groups that passed only by waiver
+
+> Example:
+```
+- name: Verify every requirement for this commit
+  uses: phase2/octane-actions/actions/require-checks@main
+  with:
+    requirements: |
+      testing: run-tests | manual-test-evidence | waiver-testing
+      vulnerability: dependency-audit | waiver-vulnerability
+```
+
+Gates a deployment on check runs already recorded against the commit, rather than re-running them. Fails the step when any group is unsatisfied or pending. Requires `checks: write` unless `gate_check_name` is empty.
+
+Common app ids for the `<app_id>/<check>` prefix:
+
+| App | App id | Checks |
+| --- | --- | --- |
+| GitHub Actions | `15368` | Workflow jobs, and checks created with `GITHUB_TOKEN` such as those from `attest-check` |
+| Diffy | `39097` | Diffy visual regression results |
+
+To find the id for another app, use the [GitHub apps API](https://docs.github.com/en/rest/apps/apps?apiVersion=2026-03-10#get-an-app)
+and get data via its slug (the name in its `github.com/apps/<slug>` URL).
+
+Using the GitHub CLI, it can be fetched via
+
+```
+gh api apps/<slug> --jq .id
+```
+
+---
+
+## attest-check
+> Usage:
+* `phase2/octane-actions/actions/attest-check@main`
+> Inputs:
+* `check_name`: (required) Name of the check run to create. `waiver-<group>` is treated by `require-checks` as an accepted exception by default.
+* `statement`: (required) What is being asserted, or why the exception is acceptable
+* `evidence_url`: Link to supporting evidence
+* `evidence_label`: Link text for `evidence_url`. Defaults to `Evidence`
+* `sha`: Commit the attestation binds to. Defaults to `github.sha`
+* `github_token`: Token with `checks:write`. Defaults to `github.token`
+
+> Outputs:
+* `check_run_id`: Id of the created check run
+* `check_run_url`: URL of the created check run
+
+> Example:
+```
+- uses: phase2/octane-actions/actions/attest-check@main
+  with:
+    check_name: manual-test-evidence
+    statement: ${{ inputs.statement }}
+    evidence_url: ${{ inputs.evidence_url }}
+    evidence_label: Test results
+```
+
+Records an attestation or waiver as a successful check run, including who triggered it, so it can satisfy a `require-checks` group. It can be run manually or from a workflow step.
+
+Attestations share the GitHub Actions app id (`15368`) with workflow jobs, so an app id prefix cannot tell them apart, and an attestation named after a job satisfies requirements for that job. Do not name an attestation after an existing check to stand in for it. The `require-checks` summary marks runs recorded by this action as attestations.
+
+---
+
 ## Contributing to this repository
 
 When making updates to this repository, be sure to make changes to a local `develop` branch
