@@ -186,6 +186,7 @@ there, because `develop` has been dormant since 2024 while pull requests target
 ## Requirements
 
 - PHP and Composer must be installed in the runner environment
+- Composer 2.7.0 or newer (the `--minimal-changes` option used by the update commands)
 - `jq` must be installed in the runner environment (used to parse audit output)
 - The repository must have a `composer.json` file
 - GitHub token must have the following permissions:
