@@ -1,0 +1,58 @@
+name: 'Coder site sync'
+description: 'Sync a Coder static-site workspace to its deploy branch using a GitHub OIDC token, with no stored secrets'
+author: 'Phase2'
+
+branding:
+  icon: 'refresh-cw'
+  color: 'blue'
+
+inputs:
+  site_url:
+    description: |
+      The site's public URL, https://<host>, with or without a trailing
+      slash. No path or port. The OIDC token's audience is this origin.
+    required: true
+  expected_commit:
+    description: |
+      Full SHA of the deploy-branch commit you just pushed. When set, the
+      step fails unless the site reports serving exactly this commit. When
+      empty, any successful sync passes and the served commit is reported.
+      github.sha is deliberately not the default: it is the source commit,
+      not the deploy-branch commit.
+    required: false
+    default: ''
+  timeout_seconds:
+    description: |
+      Overall time limit for the sync request. The site answers within
+      about 50 seconds, with "still syncing" if its sync is not done, so
+      values below 55 can turn that answer into a timeout failure. The
+      step warns when the value is below 55.
+    required: false
+    default: '60'
+
+outputs:
+  enabled:
+    description: |
+      'true' when the site's sync trigger answered, 'false' when the site is
+      not CI-enabled, empty when the trigger could not be reached.
+    value: ${{ steps.sync.outputs.enabled }}
+  commit:
+    description: 'The commit the site serves, when it reported one.'
+    value: ${{ steps.sync.outputs.commit }}
+  status:
+    description: 'One word describing the outcome, such as synced or not_ci_enabled. See the README.'
+    value: ${{ steps.sync.outputs.status }}
+
+runs:
+  using: 'composite'
+  steps:
+    # Inside a container job the github.action_path expression is the HOST
+    # path; $GITHUB_ACTION_PATH in a run step is reliable.
+    - name: Sync the Coder site
+      id: sync
+      shell: bash
+      env:
+        SITE_URL: ${{ inputs.site_url }}
+        EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+        TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+      run: bash "$GITHUB_ACTION_PATH/sync.sh"

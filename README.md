@@ -260,6 +260,67 @@ Attestations share the GitHub Actions app id (`15368`) with workflow jobs, so an
 
 ---
 
+## coder-site-sync
+> Usage:
+* `phase2/octane-actions/actions/coder-site-sync@<commit-sha>`
+> Inputs:
+* `site_url`: (required) The site's public URL, `https://<host>`, with or without a trailing slash. No path or port.
+* `expected_commit`: Full SHA of the deploy-branch commit you just pushed. The step fails unless the site serves it. When empty, any successful sync passes. Do not pass `github.sha`, which is the source commit.
+* `timeout_seconds`: Overall time limit for the sync request. Defaults to `60`. The site answers within about 50 seconds, so values below 55 can turn a "still syncing" answer into a timeout failure; the step warns about them.
+
+> Outputs:
+* `enabled`: `'true'` when the site's sync trigger answered, `'false'` when the site is not CI-enabled yet, empty when the trigger could not be reached (bad input, no token, timeout, or the gateway answered 502 to 504)
+* `commit`: The commit the site serves, when it reported one
+* `status`: One word for the outcome, such as `synced`, `mismatch`, `syncing`, `not_ci_enabled` or `site_unavailable`
+
+> Example:
+```
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      ... build into dist/ ...
+
+      - name: Push dist/ to the deploy branch
+        id: push
+        run: |
+          git add --force dist
+          tree="$(git write-tree --prefix=dist/)"
+          commit="$(git -c user.name=ci -c user.email=ci@example.com commit-tree "$tree" -m "Publish ${GITHUB_SHA}")"
+          git push --force origin "${commit}:refs/heads/prototypes-site"
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+      - name: Sync the Coder site
+        id: sync
+        uses: phase2/octane-actions/actions/coder-site-sync@<commit-sha>
+        with:
+          site_url: https://my-prototype.cloud.phase2.ai
+          expected_commit: ${{ steps.push.outputs.commit }}
+```
+
+Syncs a Phase2 Coder `static-site` workspace whose `deploy_repo` parameter names
+this repository, with no stored secrets. The step mints a GitHub OIDC token for the
+site's origin and POSTs it to the site, which verifies it, pulls its deploy branch and
+answers with the commit it serves. Requires `permissions: id-token: write` on the job.
+
+* A matching commit passes; a different commit, a failed sync, a rejected token or
+  repository, or an unavailable site (workspace not running, or its trigger down) fails
+  the step.
+* "Still syncing" and "site not CI-enabled yet" pass with a warning; the latter sets
+  `enabled` to `'false'` so a later step can fall back to the workspace's Sync Now.
+  A trigger that is present but has no `deploy_repo` also sets `enabled` to `'false'`
+  but fails the step, so give a fallback step `if: ${{ !cancelled() && steps.sync.outputs.enabled == 'false' }}`
+  (or set `continue-on-error: true` on the sync step).
+
+Pin a commit SHA rather than `@main`, since this repository has no release tags. See the
+[action README](actions/coder-site-sync/README.md) for site setup, every response, and
+troubleshooting.
+
+---
+
 ## Contributing to this repository
 
 When making updates to this repository, be sure to make changes to a local `develop` branch
