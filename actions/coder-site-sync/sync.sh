@@ -291,13 +291,19 @@ meta="$(printf 'Authorization: Bearer %s\n' "$token" \
   | curl -q --silent --show-error --request POST --data-binary '' \
       --proto "$proto" --max-time "$timeout_seconds" --connect-timeout 15 \
       --header @- --header 'Accept: application/json' \
-      --output "$work/body" --write-out '%{http_code} %{content_type}' \
+      --output "$work/body" --write-out '%{num_connects} %{http_code} %{content_type}' \
       "$endpoint" 2>"$work/curl.err")" || rc=$?
 unset token
 
+# The write-out leads with the number of connections curl made, so a timeout
+# can be told apart: exit 28 with no connection means the host never answered
+# the connect (unreachable), not that the sync outran the time limit.
+connects="${meta%% *}"
+meta="${meta#* }"
+
 if [[ "$rc" -ne 0 ]]; then
   err="$(head -c 300 "$work/curl.err")"
-  if [[ "$rc" -eq 28 ]]; then
+  if [[ "$rc" -eq 28 && "$connects" != "0" ]]; then
     finish error timeout "" "" \
       "No answer from ${origin} within ${timeout_seconds}s. The site answers within about 240s (202 if the sync or build is still running), so check the workspace's Sync Log app (and its Build Log app for build output), and keep timeout_seconds at 255 or more. ${err}"
   fi

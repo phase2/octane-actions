@@ -269,7 +269,7 @@ Attestations share the GitHub Actions app id (`15368`) with workflow jobs, so an
 * `timeout_seconds`: Overall time limit for the sync request. Defaults to `300`. The site waits up to 240 seconds for its fetch and build, so values below 255 can turn a "still syncing" answer into a timeout failure; the step warns about them.
 
 > Outputs:
-* `enabled`: `'true'` when the site's sync trigger answered, `'false'` when the site is not CI-enabled yet, empty when the trigger could not be reached (bad input, no token, timeout, or the gateway answered 502 to 504)
+* `enabled`: `'true'` when the site's sync trigger answered, `'false'` when the site is not CI-enabled yet, empty when the trigger could not be reached (bad input, missing tool, no token, timeout, unreachable, or the gateway answered 502 to 504)
 * `commit`: The source commit the site serves, when it reported one
 * `status`: One word for the outcome, such as `synced`, `commit_mismatch`, `syncing`, `build_failed`, `not_ci_enabled` or `site_unavailable`
 
@@ -288,7 +288,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      ... optionally build in CI first, as a gate ...
+      # Optionally build in CI first, as a gate.
 
       - name: Sync the Coder site
         id: sync

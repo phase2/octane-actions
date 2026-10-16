@@ -440,7 +440,9 @@ stub_ctl case build_failed; stub_log >/dev/null
 run_sync
 expect "build_failed again, fresh token" 1 error build_failed true "" "the site still serves its previous version"
 tok2="$(grep -m1 '^::stop-commands::' "${work}/log")"
-if [[ -n "$tok1" && "$tok1" != "$tok2" && "$tok1" =~ ^::stop-commands::[0-9a-f]{32}$ ]]; then
+if [[ "$tok1" =~ ^::stop-commands::[0-9a-f]{32}$ \
+  && "$tok2" =~ ^::stop-commands::[0-9a-f]{32}$ \
+  && "$tok1" != "$tok2" ]]; then
   pass "stop-commands token is 128 random bits, fresh per run"
 else
   fail "stop-commands tokens: '$tok1' then '$tok2'"
@@ -536,7 +538,7 @@ invalid_case "short expected_commit" "full 40-character" EXPECTED_COMMIT="abc123
 invalid_case "zero timeout" "timeout_seconds" TIMEOUT_SECONDS=0
 invalid_case "non-numeric timeout" "timeout_seconds" TIMEOUT_SECONDS=abc
 invalid_case "test flag ignored when GITHUB_ACTIONS=true" "must use https://" GITHUB_ACTIONS=true
-invalid_case "test flag ignored for a non-loopback host" "must use https://" SITE_URL="http://example.cloud.phase2.ai"
+invalid_case "test flag ignored for a non-loopback host" "must use https://" SITE_URL="http://127.0.0.2"
 invalid_case "loopback over http without the flag" "must use https://" CODER_SITE_SYNC_TEST_ALLOW_LOOPBACK_HTTP=
 
 # A valid production URL passes validation and stops at the token step, which

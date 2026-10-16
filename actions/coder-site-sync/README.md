@@ -187,8 +187,8 @@ Failures before or instead of a response:
 | `curl`, `jq`, `awk` or `od` is not installed (for example in a slim container job) | `missing_tool` | **fails** |
 | `site_url`, `expected_commit` (or `GITHUB_SHA`) or `timeout_seconds` is malformed | `invalid_input` | **fails** |
 | No OIDC token (missing `id-token: write`, or the runtime refused) | `no_oidc_token` | **fails** |
-| No answer within `timeout_seconds` (see that input for values below 255) | `timeout` | **fails** |
-| Connection or DNS failure | `unreachable` | **fails** |
+| Connected, but no answer within `timeout_seconds` (see that input for values below 255) | `timeout` | **fails** |
+| Connection or DNS failure, or no connection made before the time limit | `unreachable` | **fails** |
 
 `bad_request` and `method_not_allowed` should never happen, since the action
 always sends an empty POST; they point at a bug on one side.
