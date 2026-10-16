@@ -260,6 +260,70 @@ Attestations share the GitHub Actions app id (`15368`) with workflow jobs, so an
 
 ---
 
+## coder-site-sync
+> Usage:
+* `phase2/octane-actions/actions/coder-site-sync@<commit-sha>`
+> Inputs:
+* `site_url`: (required) The site's public URL, `https://<host>`, with or without a trailing slash. No path or port.
+* `expected_commit`: Full SHA of the source commit the site should serve. Defaults to `github.sha`, the commit the workflow ran on (an explicit empty value also falls back to it). A different served commit warns but passes.
+* `timeout_seconds`: Overall time limit for the sync request. Defaults to `300`. The site waits up to 240 seconds for its fetch and build, so values below 255 can turn a "still syncing" answer into a timeout failure; the step warns about them.
+
+> Outputs:
+* `enabled`: `'true'` when the site's sync trigger answered, `'false'` when the site is not CI-enabled yet, empty when the trigger could not be reached (bad input, missing tool, no token, timeout, unreachable, or the gateway answered 502 to 504)
+* `commit`: The source commit the site serves, when it reported one
+* `status`: One word for the outcome, such as `synced`, `commit_mismatch`, `syncing`, `build_failed`, `not_ci_enabled` or `site_unavailable`
+
+> Example:
+```
+on:
+  push:
+    branches: [main]   # the site's git_branch
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Optionally build in CI first, as a gate.
+
+      - name: Sync the Coder site
+        id: sync
+        uses: phase2/octane-actions/actions/coder-site-sync@<commit-sha>
+        with:
+          site_url: https://my-prototype.cloud.phase2.ai
+```
+
+Publishes a Phase2 Coder `static-site` workspace that builds itself from this
+repository, with no stored secrets and nothing pushed. The workspace owner ticks the
+site's `ci_trigger` parameter, sets `git_repo` to this repository's GitHub URL and
+`git_branch` to the source branch, and sets `build_command` and `html_subdir` (the built
+directory to serve). The step mints a GitHub OIDC token for the site's origin and POSTs it
+to the site, which verifies it, fetches and builds its branch, and answers with the
+source commit it serves. Requires `permissions: id-token: write` on the job.
+
+* The matching commit passes. A failed fetch or build, a rejected token or repository, or
+  an unavailable site (workspace not running, or its trigger down) fails the step; a
+  failed build prints the tail of its log in a collapsed group. This holds for builds
+  that finish within the site's 240-second wait; a slower build answers "still syncing",
+  and its outcome then shows only in the workspace's Build Log app.
+* "Still syncing", a different served commit (usually a newer push), and "site not
+  CI-enabled yet" pass with a warning; the last sets `enabled` to `'false'` so a later
+  step can fall back to the workspace's Sync Now. A trigger that answers but is off in the
+  workspace's running configuration (`not_enabled`: restart or rebuild the workspace after
+  changing `ci_trigger` or `git_repo`) also sets `enabled` to `'false'` but fails the step, so give a fallback
+  step `if: ${{ !cancelled() && steps.sync.outputs.enabled == 'false' }}` (or set
+  `continue-on-error: true` on the sync step).
+
+Pin a commit SHA rather than `@main`, since this repository has no release tags. See the
+[action README](actions/coder-site-sync/README.md) for site setup, every response, and
+troubleshooting.
+
+---
+
 ## Contributing to this repository
 
 When making updates to this repository, be sure to make changes to a local `develop` branch

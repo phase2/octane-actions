@@ -81,3 +81,13 @@ jobs:
       - name: Test gate evaluation and evidence rendering
         run: node --test --test-reporter=spec actions/require-checks/test-evaluate.js actions/attest-check/test-render.js
 
+  coder-site-sync:
+    name: coder-site-sync response mapping
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Test input checks, token handling and every trigger response
+        run: bash actions/coder-site-sync/test-sync.sh
