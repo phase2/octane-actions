@@ -10,6 +10,10 @@
 # here uses `env -i`, so GITHUB_ACTIONS is unset even inside a workflow. Two
 # cases below prove the flag is ignored outside those conditions.
 #
+# A build_failed tail is untrusted text. A small model of the runner's
+# command parsing (simulate_runner below) checks that none of the tail's
+# lines would be processed as workflow commands.
+#
 # It also checks that action.yml wires every input to the script and every
 # output to the step, and that README.md documents every status the script
 # can report.
@@ -89,7 +93,7 @@ run_sync() {
     ACTIONS_ID_TOKEN_REQUEST_URL="${stub}/oidc?api-version=2.0" \
     ACTIONS_ID_TOKEN_REQUEST_TOKEN="$REQUEST_TOKEN" \
     CODER_SITE_SYNC_TEST_ALLOW_LOOPBACK_HTTP=1 \
-    SITE_URL="$stub" EXPECTED_COMMIT="" TIMEOUT_SECONDS=60 \
+    SITE_URL="$stub" EXPECTED_COMMIT="" TIMEOUT_SECONDS=300 \
     "$@" bash "$script" >"${work}/log" 2>&1 || rc=$?
 }
 
@@ -209,8 +213,8 @@ if wiring="$(ruby -ryaml -e '
       errors << "env #{var} is #{env[var].inspect}, want inputs.#{input}" unless env[var].to_s.gsub(/\s/, "") == "${{inputs.#{input}}}"
     end
     errors << "site_url must be required" unless inputs.dig("site_url", "required") == true
-    errors << "timeout_seconds default must exceed the 50 s server wait" unless inputs.dig("timeout_seconds", "default").to_s.to_i > 50
-    errors << "expected_commit must default to empty" unless inputs.dig("expected_commit", "default").to_s.empty?
+    errors << "timeout_seconds must default to 300 (the 240 s server wait plus margin)" unless inputs.dig("timeout_seconds", "default").to_s == "300"
+    errors << "expected_commit must default to github.sha" unless inputs.dig("expected_commit", "default").to_s.gsub(/\s/, "") == "${{github.sha}}"
   end
   %w[enabled commit status].each do |o|
     v = outputs.dig(o, "value").to_s.gsub(/\s/, "")
@@ -233,7 +237,7 @@ fi
 # shellcheck disable=SC2016 # Literal characters to delete.
 for var in $(grep -oE '\$\{[A-Z_]+:-' "$script" | tr -d '${:-' | sort -u); do
   case "$var" in
-    SITE_URL|EXPECTED_COMMIT|TIMEOUT_SECONDS|ACTIONS_ID_TOKEN_REQUEST_URL|ACTIONS_ID_TOKEN_REQUEST_TOKEN|GITHUB_OUTPUT|GITHUB_STEP_SUMMARY|GITHUB_REPOSITORY|GITHUB_ACTIONS|RUNNER_TEMP|TMPDIR|CODER_SITE_SYNC_TEST_ALLOW_LOOPBACK_HTTP)
+    SITE_URL|EXPECTED_COMMIT|TIMEOUT_SECONDS|ACTIONS_ID_TOKEN_REQUEST_URL|ACTIONS_ID_TOKEN_REQUEST_TOKEN|GITHUB_OUTPUT|GITHUB_STEP_SUMMARY|GITHUB_REPOSITORY|GITHUB_SHA|GITHUB_ACTIONS|RUNNER_TEMP|TMPDIR|CODER_SITE_SYNC_TEST_ALLOW_LOOPBACK_HTTP)
       pass "env $var known" ;;
     *) fail "sync.sh reads unexpected env $var" ;;
   esac
@@ -267,14 +271,17 @@ response_case "200 matching commit" synced 0 notice synced true "$COMMIT" "as ex
 response_case "200 matching commit, expected given in uppercase" synced 0 notice synced true "$COMMIT" "as expected" "$(tr a-f A-F <<<"$COMMIT")"
 response_case "200 uppercase commit from server" synced_upper 0 notice synced true "$COMMIT" "as expected" "$COMMIT"
 response_case "200, no expected commit" synced 0 notice synced true "$COMMIT" "serves ${COMMIT}"
-response_case "200 mismatching commit" mismatch 1 error mismatch true "$OTHER" "Site serves ${OTHER}, expected ${COMMIT}" "$COMMIT"
+response_case "200 mismatching commit warns" mismatch 0 warning commit_mismatch true "$OTHER" "serves ${OTHER}, not ${COMMIT} (expected_commit)" "$COMMIT"
+for cause in "a newer push landed" "a branch other than the site's git_branch" "a pull_request merge commit"; do
+  if grep -E '^::warning ' "${work}/log" | grep -qF "$cause"; then pass "names: $cause"; else fail "commit_mismatch does not name: $cause"; fi
+done
 response_case "200 without a valid commit" synced_bad_commit 1 error invalid_response true "" "no valid commit" "$COMMIT"
 response_case "202 still syncing" syncing 0 warning syncing true "" "still syncing" "$COMMIT"
 response_case "JSON 400 bad_request" bad_request 1 error bad_request true "" "bad_request"
 response_case "JSON 401 invalid_token" invalid_token 1 error invalid_token true "" "invalid_token"
 response_case "JSON 403 wrong_audience" wrong_audience 1 error wrong_audience true "" "wrong_audience"
-response_case "JSON 403 wrong_repository" wrong_repository 1 error wrong_repository true "" "deploy_repo parameter to ${REPO}"
-response_case "JSON 404 not_enabled" not_enabled 1 error not_enabled false "" "not_enabled"
+response_case "JSON 403 wrong_repository" wrong_repository 1 error wrong_repository true "" "points at ${REPO}"
+response_case "JSON 404 not_enabled" not_enabled 1 error not_enabled false "" "then restart or rebuild the workspace"
 response_case "JSON 405 method_not_allowed" method_not_allowed 1 error method_not_allowed true "" "method_not_allowed"
 response_case "JSON 500 sync_failed" sync_failed 1 error sync_failed true "" "couldn't find remote ref prototypes-site 100%25"
 response_case "JSON 503 jwks_unavailable" jwks_unavailable 1 error jwks_unavailable true "" "jwks_unavailable"
@@ -330,16 +337,118 @@ run_sync SITE_URL="  HTTP://LOCALHOST:${port}/ "
 expect "uppercase URL with trailing slash" 0 notice synced true "$COMMIT" "serves ${COMMIT}"
 expect_request "http://localhost:${port}"
 
-# timeout_seconds below 55 warns but still runs; 55 does not warn (the
-# default-run cases above use 60).
+# timeout_seconds below 255 warns but still runs; 255 does not warn (the
+# default-run cases above pass 300). An empty value means the default, 300.
 stub_ctl case synced; stub_log >/dev/null
-run_sync TIMEOUT_SECONDS=54
+run_sync TIMEOUT_SECONDS=254
 WANT_ANNOTATIONS=2
-expect "timeout_seconds 54 warns" 0 notice synced true "$COMMIT" "serves ${COMMIT}"
-if grep -E '^::warning ' "${work}/log" | grep -qF "timeout_seconds is 54"; then pass "warned for 54"; else fail "no warning for timeout_seconds=54"; fi
+expect "timeout_seconds 254 warns" 0 notice synced true "$COMMIT" "serves ${COMMIT}"
+if grep -E '^::warning ' "${work}/log" | grep -qF "timeout_seconds is 254"; then pass "warned for 254"; else fail "no warning for timeout_seconds=254"; fi
 stub_log >/dev/null
-run_sync TIMEOUT_SECONDS=55
-expect "timeout_seconds 55 does not warn" 0 notice synced true "$COMMIT" "serves ${COMMIT}"
+run_sync TIMEOUT_SECONDS=255
+expect "timeout_seconds 255 does not warn" 0 notice synced true "$COMMIT" "serves ${COMMIT}"
+stub_log >/dev/null
+run_sync TIMEOUT_SECONDS=
+expect "empty timeout_seconds means 300" 0 notice synced true "$COMMIT" "serves ${COMMIT}"
+if grep -qF "waiting up to 300s" "${work}/log"; then pass "default 300"; else fail "default timeout is not 300: $(grep waiting "${work}/log")"; fi
+stub_log >/dev/null
+
+# ---------------------------------------------------------------------------
+printf '#### expected commit defaults to GITHUB_SHA\n'
+
+stub_ctl case synced; stub_log >/dev/null
+run_sync GITHUB_SHA="$COMMIT"
+expect "empty input, GITHUB_SHA matches" 0 notice synced true "$COMMIT" "as expected"
+expect_request "$stub"
+
+stub_ctl case synced; stub_log >/dev/null
+run_sync GITHUB_SHA="$OTHER"
+expect "empty input, GITHUB_SHA differs" 0 warning commit_mismatch true "$COMMIT" "not ${OTHER} (expected_commit, default github.sha)"
+expect_request "$stub"
+
+# action.yml's default arrives as an input equal to GITHUB_SHA.
+stub_ctl case synced; stub_log >/dev/null
+run_sync GITHUB_SHA="$OTHER" EXPECTED_COMMIT="$OTHER"
+expect "defaulted input equal to GITHUB_SHA differs" 0 warning commit_mismatch true "$COMMIT" "not ${OTHER} (expected_commit, default github.sha)"
+expect_request "$stub"
+
+stub_ctl case synced; stub_log >/dev/null
+run_sync GITHUB_SHA="$OTHER" EXPECTED_COMMIT="$COMMIT"
+expect "input overrides GITHUB_SHA" 0 notice synced true "$COMMIT" "as expected"
+expect_request "$stub"
+
+stub_log >/dev/null
+run_sync GITHUB_SHA="not-a-sha"
+expect "malformed GITHUB_SHA" 1 error invalid_input "" "" "GITHUB_SHA must be a full 40-character commit SHA"
+n="$(stub_log | jq 'length')"
+check "$n" "0" "no requests" "malformed GITHUB_SHA: $n requests made"
+
+# ---------------------------------------------------------------------------
+printf '#### build_failed log tail is untrusted\n'
+
+# A model of how the runner treats each output line: after trimming leading
+# whitespace, a line starting with "::" is a command, and "##[" anywhere is a
+# legacy command, unless ::stop-commands::<token> is in force, in which case
+# only "::<token>::" is recognised (and resumes). Prints the commands that
+# would be processed, one per line.
+simulate_runner() {
+  awk '
+    { line = $0; sub(/^[ \t]+/, "", line) }
+    stopped { if (line == "::" tok "::") { stopped = 0; print "resume" } next }
+    line ~ /^::[A-Za-z-]+/ {
+      cmd = line; sub(/^::/, "", cmd); sub(/[ :].*/, "", cmd); print cmd
+      if (cmd == "stop-commands") { tok = line; sub(/^::stop-commands::/, "", tok); stopped = 1 }
+      next
+    }
+    index(line, "##[") { print "legacy" }
+  ' "$1"
+}
+
+stub_ctl case build_failed; stub_log >/dev/null
+run_sync EXPECTED_COMMIT="$COMMIT"
+expect "JSON 500 build_failed" 1 error build_failed true "" "Last log line: exit code 1 done"
+if grep -E '^::error ' "${work}/log" | grep -qF "workspace's Build Log app"; then pass "points at Build Log"; else fail "build_failed does not point at the Build Log app"; fi
+expect_request "$stub"
+processed="$(simulate_runner "${work}/log" | tr '\n' ' ')"
+check "$processed" "add-mask group stop-commands resume endgroup error " \
+  "only the action's own commands are processed" \
+  "processed commands are '${processed}', want the action's own six only"
+# The second guard on its own: with no stop-commands in force, the tail
+# lines still contain nothing the runner would process.
+# (No {32} interval: mawk, Debian's default awk, does not support it.)
+tail_block="$(awk '/^::stop-commands::/ { on = 1; next } /^::[0-9a-f]+::$/ { on = 0 } on' "${work}/log")"
+check "$(grep -vc '^| ' <<<"$tail_block")" "0" "every tail line is prefixed" \
+  "unprefixed tail lines: $(grep -v '^| ' <<<"$tail_block")"
+printf '%s\n' "$tail_block" >"${work}/tail"
+check "$(simulate_runner "${work}/tail" | tr '\n' ' ')" "" "tail is inert without stop-commands" \
+  "tail lines would be processed without stop-commands: $(simulate_runner "${work}/tail" | tr '\n' ' ')"
+for want in '| ::error::injected-from-build' '| ::add-mask::build-secret' '| ::stop-commands::fake-token' \
+            '| ::warning::after-fake-stop' '| ## [error]legacy-command' '| Error: Cannot find module vite'; do
+  if grep -qxF -- "$want" <<<"$tail_block"; then pass "tail shows $want"; else fail "tail lacks line '$want': $tail_block"; fi
+done
+if grep -q $'\x1b' "${work}/log" "${work}/summary"; then fail "ANSI escape reached the log"; else pass "no ANSI escapes"; fi
+if grep -q $'\r' "${work}/log" "${work}/summary"; then fail "carriage return reached the log"; else pass "no carriage returns"; fi
+if grep -qE '^::group::Build log tail' "${work}/log" && grep -qx '::endgroup::' "${work}/log"; then
+  pass "tail is in a log group"
+else
+  fail "tail is not in a ::group::"
+fi
+if grep -qF 'injected-from-build' "${work}/summary"; then fail "summary carries the tail"; else pass "summary mentions only"; fi
+tok1="$(grep -m1 '^::stop-commands::' "${work}/log")"
+
+stub_ctl case build_failed; stub_log >/dev/null
+run_sync
+expect "build_failed again, fresh token" 1 error build_failed true "" "the site still serves its previous version"
+tok2="$(grep -m1 '^::stop-commands::' "${work}/log")"
+if [[ -n "$tok1" && "$tok1" != "$tok2" && "$tok1" =~ ^::stop-commands::[0-9a-f]{32}$ ]]; then
+  pass "stop-commands token is 128 random bits, fresh per run"
+else
+  fail "stop-commands tokens: '$tok1' then '$tok2'"
+fi
+
+stub_ctl case build_failed_empty; stub_log >/dev/null
+run_sync
+expect "build_failed with an empty tail" 1 error build_failed true "" "Last log line: (none)"
 stub_log >/dev/null
 
 # ---------------------------------------------------------------------------
@@ -349,7 +458,7 @@ stub_ctl case slow; stub_log >/dev/null
 run_sync TIMEOUT_SECONDS=1
 WANT_ANNOTATIONS=2
 expect "request times out" 1 error timeout "" "" "No answer from"
-if grep -E '^::warning ' "${work}/log" | grep -qF "below 55"; then pass "short timeout warned"; else fail "no warning for timeout_seconds=1"; fi
+if grep -E '^::warning ' "${work}/log" | grep -qF "below 255"; then pass "short timeout warned"; else fail "no warning for timeout_seconds=1"; fi
 
 run_sync SITE_URL="http://127.0.0.1:1"
 expect "connection refused" 1 error unreachable "" "" "Could not reach"
@@ -388,13 +497,13 @@ printf '#### missing tools\n'
 shim_path() {
   local dir="${work}/bin-no-$1" t
   mkdir -p "$dir"
-  for t in bash mktemp rm tr sed head curl jq; do
+  for t in bash mktemp rm tr sed head awk od curl jq; do
     [[ "$t" == "$1" ]] && continue
     ln -sf "$(command -v "$t")" "${dir}/${t}"
   done
   printf '%s' "$dir"
 }
-for tool in curl jq; do
+for tool in curl jq awk od; do
   stub_log >/dev/null
   run_sync PATH="$(shim_path "$tool")"
   expect "$tool missing" 1 error missing_tool "" "" "${tool} is not installed"

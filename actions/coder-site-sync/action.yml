@@ -1,5 +1,5 @@
 name: 'Coder site sync'
-description: 'Sync a Coder static-site workspace to its deploy branch using a GitHub OIDC token, with no stored secrets'
+description: 'Make a Coder static-site workspace fetch and build its source branch now, using a GitHub OIDC token, with no stored secrets'
 author: 'Phase2'
 
 branding:
@@ -14,21 +14,20 @@ inputs:
     required: true
   expected_commit:
     description: |
-      Full SHA of the deploy-branch commit you just pushed. When set, the
-      step fails unless the site reports serving exactly this commit. When
-      empty, any successful sync passes and the served commit is reported.
-      github.sha is deliberately not the default: it is the source commit,
-      not the deploy-branch commit.
+      Full SHA of the source commit the site should serve after the sync.
+      Defaults to github.sha, the commit this workflow ran on; an explicit
+      empty value also falls back to it. If the site reports a different
+      commit, the step warns (commit_mismatch) but still passes.
     required: false
-    default: ''
+    default: ${{ github.sha }}
   timeout_seconds:
     description: |
-      Overall time limit for the sync request. The site answers within
-      about 50 seconds, with "still syncing" if its sync is not done, so
-      values below 55 can turn that answer into a timeout failure. The
-      step warns when the value is below 55.
+      Overall time limit for the sync request. The site waits up to 240
+      seconds for its fetch and build, then answers "still syncing", so
+      values below 255 can turn that answer into a timeout failure. The
+      step warns when the value is below 255.
     required: false
-    default: '60'
+    default: '300'
 
 outputs:
   enabled:
@@ -37,7 +36,7 @@ outputs:
       not CI-enabled, empty when the trigger could not be reached.
     value: ${{ steps.sync.outputs.enabled }}
   commit:
-    description: 'The commit the site serves, when it reported one.'
+    description: 'The source commit the site serves, when it reported one.'
     value: ${{ steps.sync.outputs.commit }}
   status:
     description: 'One word describing the outcome, such as synced or not_ci_enabled. See the README.'

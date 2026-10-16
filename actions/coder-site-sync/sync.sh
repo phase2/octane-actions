@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Ask a Coder static-site workspace to sync its deploy branch, authenticated by
-# a GitHub Actions OIDC token, and report what the site now serves.
+# Ask a Coder static-site workspace to sync (fetch, and build if it has a
+# build_command) its source branch, authenticated by a GitHub Actions OIDC
+# token, and report what the site now serves.
 #
 # The site's trigger route (POST /_hooks/deploy) verifies the token's
-# signature, issuer, times, audience (its own origin) and repository (its
-# deploy_repo parameter), runs its existing sync, and answers with the commit
-# it serves. Nothing secret is stored anywhere: the token is minted for this
-# job, bound to this site's origin, and expires within minutes.
+# signature, issuer, times, audience (its own origin) and repository (the
+# GitHub repository in its git_repo parameter, when its ci_trigger parameter
+# is on), runs its sync, and answers with the source commit it serves.
+# Nothing secret is stored anywhere: the token is minted for this job, bound
+# to this site's origin, and expires within minutes.
 #
 # Inputs arrive as environment variables set by action.yml:
 #   SITE_URL         Site URL, https://<host> with an optional trailing slash.
-#   EXPECTED_COMMIT  Deploy-branch commit the caller just pushed. Optional.
+#   EXPECTED_COMMIT  Source commit the workflow ran on. Empty means
+#                    $GITHUB_SHA, which the runner sets for every step.
 #   TIMEOUT_SECONDS  Overall time limit for the sync request.
 # The runner provides ACTIONS_ID_TOKEN_REQUEST_URL and
 # ACTIONS_ID_TOKEN_REQUEST_TOKEN when the job has `id-token: write`.
@@ -111,28 +114,45 @@ is_commit() {
 
 # --- tools ------------------------------------------------------------------
 
-# Both are on ubuntu-latest and Phase2's self-hosted runners, but a container
+# All are on ubuntu-latest and Phase2's self-hosted runners, but a container
 # job brings its own image. Failing here names the tool and still sets the
 # outputs, instead of a bare "command not found" halfway through.
-for tool in curl jq; do
+for tool in curl jq awk od; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     finish error missing_tool "" "" \
-      "${tool} is not installed on this runner or in this job's container; coder-site-sync needs bash, curl and jq."
+      "${tool} is not installed on this runner or in this job's container; coder-site-sync needs bash, curl, jq, awk and od."
   fi
 done
 
 # --- inputs -----------------------------------------------------------------
 
 site_url="$(trim "${SITE_URL:-}")"
+# The site serves the head of its source branch, so the commit to expect is
+# the one this workflow ran on. action.yml defaults the input to github.sha;
+# this fallback also covers an input passed explicitly but empty, such as an
+# unset step output.
+# expected_from names the source in messages: the input's default and the
+# fallback are both github.sha, and the input cannot tell us whether it was
+# defaulted, so a value equal to GITHUB_SHA is reported as the default.
 expected="$(lower "$(trim "${EXPECTED_COMMIT:-}")")"
-timeout_seconds="$(trim "${TIMEOUT_SECONDS:-60}")"
+github_sha="$(lower "$(trim "${GITHUB_SHA:-}")")"
+expected_label="expected_commit"
+expected_from="expected_commit"
+if [[ -z "$expected" ]]; then
+  expected="$github_sha"
+  expected_from="GITHUB_SHA"
+fi
+if [[ -n "$expected" && "$expected" == "$github_sha" ]]; then
+  expected_label="expected_commit, default github.sha"
+fi
+timeout_seconds="$(trim "${TIMEOUT_SECONDS:-300}")"
 
 if [[ -z "$site_url" ]]; then
   finish error invalid_input "" "" "site_url is required."
 fi
 if [[ -n "$expected" ]] && ! is_commit "$expected"; then
   finish error invalid_input "" "" \
-    "expected_commit must be a full 40-character commit SHA, got '${expected}'."
+    "${expected_from} must be a full 40-character commit SHA, got '${expected}'."
 fi
 if ! [[ "$timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]]; then
   finish error invalid_input "" "" \
@@ -197,12 +217,13 @@ if ! [[ "$host" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
     "site_url has an invalid host, got '${site_url}'."
 fi
 
-# The site answers within about 50 seconds of receiving the request, with 202
-# if its sync is still running. A shorter client limit can give up first and
-# turn that harmless 202 into a timeout failure.
-if (( timeout_seconds < 55 )); then
+# The site waits up to 240 seconds from the request's arrival for its fetch
+# and build, then answers 202 if they are still running. A client limit
+# below about 255 can give up first and turn that harmless 202 into a
+# timeout failure.
+if (( timeout_seconds < 255 )); then
   printf '::warning title=coder-site-sync::%s\n' \
-    "timeout_seconds is ${timeout_seconds}. The site can take about 50s to answer, so values below 55 can turn a \"still syncing\" answer into a timeout failure."
+    "timeout_seconds is ${timeout_seconds}. The site waits up to 240s for its build before answering, so values below 255 can turn a \"still syncing\" answer into a timeout failure."
 fi
 
 origin="${scheme}://${host}${port:+:$port}"
@@ -278,7 +299,7 @@ if [[ "$rc" -ne 0 ]]; then
   err="$(head -c 300 "$work/curl.err")"
   if [[ "$rc" -eq 28 ]]; then
     finish error timeout "" "" \
-      "No answer from ${origin} within ${timeout_seconds}s. The site answers within about 50s (202 if the sync is still running), so check the workspace's Sync Log app, and keep timeout_seconds at 55 or more. ${err}"
+      "No answer from ${origin} within ${timeout_seconds}s. The site answers within about 240s (202 if the sync or build is still running), so check the workspace's Sync Log app (and its Build Log app for build output), and keep timeout_seconds at 255 or more. ${err}"
   fi
   finish error unreachable "" "" \
     "Could not reach ${origin} (curl exit ${rc}). ${err}"
@@ -315,7 +336,7 @@ if [[ "$content_type" == application/json* ]]; then
     served="$(body_field commit)"
     detail="$(body_field detail)"
     case "${http_code}:${field}" in
-      200:synced|202:syncing|400:bad_request|401:invalid_token|403:wrong_audience|403:wrong_repository|404:not_enabled|405:method_not_allowed|500:sync_failed|503:jwks_unavailable)
+      200:synced|202:syncing|400:bad_request|401:invalid_token|403:wrong_audience|403:wrong_repository|404:not_enabled|405:method_not_allowed|500:sync_failed|500:build_failed|503:jwks_unavailable)
         ours=true ;;
     esac
   fi
@@ -323,6 +344,53 @@ fi
 
 repo="${GITHUB_REPOSITORY:-this repository}"
 synclog="Check the workspace's Sync Log app."
+
+# Prints the build log tail the site returned with build_failed, inside a
+# collapsed log group. The tail is untrusted: it is whatever the project's
+# build printed, so it could contain lines that look like workflow commands.
+# Two independent guards keep them inert:
+#   1. ::stop-commands:: with a fresh random token suspends ALL workflow
+#      command processing until ::<token>:: is printed. The token is 128
+#      random bits generated after the tail arrived, so the tail cannot
+#      contain it.
+#   2. Every tail line is printed behind a "| " prefix, so no line of it
+#      starts with "::", and "##[" (which the runner's legacy parser looks
+#      for anywhere in a line) is shown as "## [". Either guard alone keeps
+#      the tail inert.
+# ANSI escape sequences and other control characters are removed too, so the
+# tail cannot recolour or rewrite the surrounding log. The site already caps
+# the tail at 20 lines and 2 KiB; this keeps at most the last 4096
+# characters (as bash counts them in the runner's locale) and 40 lines in
+# case it does not.
+clean_tail() {
+  local t="$1"
+  if (( ${#t} > 4096 )); then
+    t="${t: -4096}"
+  fi
+  printf '%s\n' "$t" \
+    | LC_ALL=C sed -e $'s#\x1b\\[[0-9;?]*[ -/]*[@-~]##g' -e $'s#\x1b\\][^\x07]*\x07##g' \
+    | LC_ALL=C tr -d '\000-\010\013-\037\177'
+}
+
+print_build_tail() {
+  local tok
+  tok="$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')"
+  printf '::group::Build log tail from %s (untrusted, shown literally)\n' "$origin"
+  printf '::stop-commands::%s\n' "$tok"
+  # The last 40 lines up to the last non-blank one, each behind "| ".
+  clean_tail "$1" \
+    | sed 's/##\[/## [/g' \
+    | awk '{ l[NR] = $0 } NF { last = NR }
+           END { for (i = (last > 40 ? last - 39 : 1); i <= last; i++) print "| " l[i] }'
+  printf '::%s::\n' "$tok"
+  printf '::endgroup::\n'
+}
+
+# The last non-empty line of the tail, cleaned as above, for the one-line
+# annotation. finish escapes it.
+last_tail_line() {
+  clean_tail "$1" | awk 'NF { last = $0 } END { print substr(last, 1, 300) }'
+}
 
 if [[ "$ours" == "true" ]]; then
   case "$field" in
@@ -340,12 +408,14 @@ if [[ "$ours" == "true" ]]; then
         finish notice synced true "$served" \
           "${origin} synced and serves ${served}, as expected."
       fi
-      finish error mismatch true "$served" \
-        "Site serves ${served}, expected ${expected}. ${synclog} Check that the site's git_branch is the branch you pushed."
+      # Not a failure: the site serves its branch head, which moves on its
+      # own. A newer push between checkout and sync is the common case.
+      finish warning commit_mismatch true "$served" \
+        "${origin} synced but serves ${served}, not ${expected} (${expected_label}). Most likely a newer push landed on the site's branch between checkout and sync, this workflow ran on a branch other than the site's git_branch, or this ran on a pull_request merge commit."
       ;;
     syncing)
       finish warning syncing true "" \
-        "${origin} is still syncing after its wait expired; the new content should appear shortly. ${synclog}"
+        "${origin} is still syncing after its wait expired; the new content should appear shortly. ${synclog} Build progress is in its Build Log app."
       ;;
     invalid_token)
       finish error invalid_token true "" \
@@ -357,16 +427,22 @@ if [[ "$ours" == "true" ]]; then
       ;;
     wrong_repository)
       finish error wrong_repository true "" \
-        "${origin} does not accept syncs from ${repo} (wrong_repository). The workspace owner must set the site's deploy_repo parameter to ${repo}."
+        "${origin} does not accept syncs from ${repo} (wrong_repository). The site only accepts the GitHub repository in its git_repo parameter; check that it points at ${repo}."
       ;;
     not_enabled)
       finish error not_enabled false "" \
-        "${origin} has its sync trigger turned off (not_enabled). The workspace owner must set the site's deploy_repo parameter to ${repo}."
+        "${origin} has its sync trigger turned off in the workspace's running configuration (not_enabled). The workspace owner should check that ci_trigger is ticked and git_repo is the GitHub URL of ${repo}, then restart or rebuild the workspace, since changes to those parameters take effect only then."
       ;;
     sync_failed)
       detail="$(printf '%s' "$detail" | head -c 500)"
       finish error sync_failed true "" \
-        "The sync on ${origin} failed: ${detail:-no detail}. ${synclog}"
+        "The sync on ${origin} failed to fetch or check out: ${detail:-no detail}. ${synclog}"
+      ;;
+    build_failed)
+      print_build_tail "$detail"
+      last="$(last_tail_line "$detail")"
+      finish error build_failed true "" \
+        "The build on ${origin} failed; the site still serves its previous version. Last log line: ${last:-(none)}. The build log tail is in this step's log; the full build output is in the workspace's Build Log app."
       ;;
     jwks_unavailable)
       finish error jwks_unavailable true "" \
@@ -393,4 +469,4 @@ case "$http_code" in
     ;;
 esac
 finish warning not_ci_enabled false "" \
-  "Site not CI-enabled yet: ${origin} answered HTTP ${http_code} without the sync trigger's response. Ask the workspace owner to set the site's deploy_repo parameter to ${repo}, or press Sync Now on the workspace."
+  "Site not CI-enabled yet: ${origin} answered HTTP ${http_code} without the sync trigger's response. Ask the workspace owner to tick the site's ci_trigger parameter (git_repo must be the GitHub URL of ${repo}), or press Sync Now on the workspace."

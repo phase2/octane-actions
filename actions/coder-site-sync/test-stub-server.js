@@ -34,6 +34,24 @@ const CASES = {
   sync_failed_inject: json(500, { error: 'sync_failed', detail: 'line one\n::error::injected\r\n::add-mask::x' }),
   sync_failed_markdown: json(500, { error: 'sync_failed', detail: '<img src=x onerror=alert(1)> **bold** [link](https://evil.example) `code`' }),
   jwks_unavailable: json(503, { error: 'jwks_unavailable' }),
+  // A hostile build log tail: lines that would be workflow commands, a fake
+  // stop-commands, a legacy ##[ command, ANSI colour and an OSC title.
+  build_failed: json(500, {
+    error: 'build_failed',
+    detail: [
+      '> npm run build',
+      '\u001b[31mError: Cannot find module vite\u001b[0m\r',
+      '::error::injected-from-build',
+      '::add-mask::build-secret',
+      '::stop-commands::fake-token',
+      '::warning::after-fake-stop',
+      '::fake-token::',
+      '##[error]legacy-command',
+      '  ::endgroup::',
+      'exit code 1 \u001b]0;title\u0007done',
+    ].join('\n'),
+  }),
+  build_failed_empty: json(500, { error: 'build_failed', detail: '' }),
   redirect_302: html(302, '<a href="/login">Found</a>', { Location: '/login' }),
   // Absolute, to another host name for the same stub, as the Site Access
   // gate does when it sends the browser to its login service.
