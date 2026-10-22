@@ -13,6 +13,10 @@
 #   * A footer interpolated into the script instead of read from the
 #     environment, letting markdown backticks or $(...) execute on the runner.
 #
+# The same step writes commit_message.txt to a second heredoc output, which
+# fails the same way when Claude leaves off the trailing newline. Cases 8-11
+# cover that block.
+#
 # Rather than re-implementing the script, this test extracts the shipped `run:`
 # block out of action.yml, substitutes the ${{ }} expressions, and executes it
 # against a scratch working directory. It therefore fails if action.yml drifts.
@@ -328,6 +332,108 @@ if run_step "$wd" ""; then
     pass "branch name is '${branch}'"
   else
     fail "branch name '${branch}' no longer matches issue/autoupdate-*; phase2/octane-ci's DB-update guard keys on the autoupdate- token"
+  fi
+else
+  fail "step exited non-zero: $(cat "${wd}/stderr")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 8: commit_message.txt with NO trailing newline. This is the exact file
+#         Claude wrote in a failed run; the runner rejected the output with
+#         "Matching delimiter not found 'GHCMEOF'".
+# ---------------------------------------------------------------------------
+printf '== case 8: commit_message.txt without a trailing newline\n'
+wd="$(new_workdir 8)"
+printf 'Body.\n' >"${wd}/pr_body.md"
+msg='Security update: drupal/shield
+
+- drupal/shield: 1.8.0 -> 1.10.0 (SA-CONTRIB-2026-248, CVE-2026-107256 - Access bypass)
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>'
+printf '%s' "$msg" >"${wd}/commit_message.txt"
+if run_step "$wd" ""; then
+  if assert_heredoc_wellformed "$STEP_OUTPUT" commit_message "case 8"; then
+    pass "commit_message terminator survives a message with no trailing newline"
+  fi
+  got="$(extract_output "$STEP_OUTPUT" commit_message)"
+  if [[ "$got" == "$msg" ]]; then
+    pass "commit message content preserved"
+  else
+    fail "commit message mangled"
+    printf '    expected: %q\n    got:      %q\n' "$msg" "$got"
+  fi
+  if assert_no_orphan_lines "$STEP_OUTPUT"; then
+    pass "no lines escaped their heredoc block"
+  else
+    fail "content escaped its heredoc block; the runner would reject this file command"
+  fi
+  [[ -f "${wd}/commit_message.txt" ]] && fail "commit_message.txt was not removed; it would be committed" || pass "commit_message.txt removed from the working directory"
+  leftover="$(find "${wd}/runner_temp" -name 'octane-commit-message.txt' -print 2>/dev/null | head -1)"
+  [[ -n "$leftover" ]] && fail "scratch commit message left in RUNNER_TEMP" || pass "scratch commit message cleaned from RUNNER_TEMP"
+else
+  fail "step exited non-zero: $(cat "${wd}/stderr")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 9: commit_message.txt with a trailing newline passes through unchanged.
+# ---------------------------------------------------------------------------
+printf '== case 9: commit_message.txt with a trailing newline (unchanged)\n'
+wd="$(new_workdir 9)"
+printf 'Security update: drupal/ai\n\n- drupal/ai: 1.4.3 -> 1.4.8\n' >"${wd}/commit_message.txt"
+if run_step "$wd" ""; then
+  assert_heredoc_wellformed "$STEP_OUTPUT" commit_message "case 9"
+  got="$(extract_output "$STEP_OUTPUT" commit_message)"
+  if [[ "$got" == $'Security update: drupal/ai\n\n- drupal/ai: 1.4.3 -> 1.4.8' ]]; then
+    pass "commit message passes through without an extra blank line"
+  else
+    fail "commit message altered: $(printf '%q' "$got")"
+  fi
+else
+  fail "step exited non-zero: $(cat "${wd}/stderr")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 10: no commit_message.txt. Built-in fallback message.
+# ---------------------------------------------------------------------------
+printf '== case 10: no commit_message.txt (fallback message)\n'
+wd="$(new_workdir 10)"
+if run_step "$wd" ""; then
+  assert_heredoc_wellformed "$STEP_OUTPUT" commit_message "case 10"
+  got="$(extract_output "$STEP_OUTPUT" commit_message)"
+  if grep -q '^Security update: Drupal Composer dependencies$' <<<"$got" \
+     && grep -q '^Vulnerabilities addressed: 7$' <<<"$got"; then
+    pass "fallback commit message is used and carries the vulnerability count"
+  else
+    fail "fallback commit message missing or malformed: $got"
+  fi
+else
+  fail "step exited non-zero: $(cat "${wd}/stderr")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 11: a commit message containing the old fixed delimiter must not
+#          truncate the output.
+# ---------------------------------------------------------------------------
+printf '== case 11: a commit message containing GHCMEOF does not truncate\n'
+wd="$(new_workdir 11)"
+printf 'Subject.\nGHCMEOF\nand then more text.\n' >"${wd}/commit_message.txt"
+if run_step "$wd" ""; then
+  delim="$(output_delim "$STEP_OUTPUT" commit_message)"
+  if [[ "$delim" == "GHCMEOF" ]]; then
+    fail "the delimiter is still the fixed string GHCMEOF; message content can terminate the block"
+  else
+    pass "commit_message delimiter is randomised ('${delim}')"
+  fi
+  got="$(extract_output "$STEP_OUTPUT" commit_message)"
+  if grep -Fq 'and then more text.' <<<"$got"; then
+    pass "content after the embedded delimiter survived"
+  else
+    fail "output was truncated at the embedded delimiter: $got"
+  fi
+  if assert_no_orphan_lines "$STEP_OUTPUT"; then
+    pass "no lines escaped their heredoc block"
+  else
+    fail "content escaped its heredoc block; the runner would reject this file command"
   fi
 else
   fail "step exited non-zero: $(cat "${wd}/stderr")"

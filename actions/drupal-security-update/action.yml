@@ -259,23 +259,35 @@ runs:
         rm -f "$prBody"
 
         # Read commit message from Claude's output (if exists) then remove it so it's not committed
+        commitMsg="${RUNNER_TEMP:-/tmp}/octane-commit-message.txt"
         if [ -f commit_message.txt ]; then
-          {
-            echo "commit_message<<GHCMEOF"
-            cat commit_message.txt
-            echo "GHCMEOF"
-          } >> $GITHUB_OUTPUT
+          cp commit_message.txt "$commitMsg"
           rm commit_message.txt
         else
           {
-            echo "commit_message<<GHCMEOF"
             echo "Security update: Drupal Composer dependencies"
             echo ""
             echo "Automated security update performed by Drupal Security Updates action."
             echo "Vulnerabilities addressed: ${{ steps.audit.outputs.vulnerability_count }}"
-            echo "GHCMEOF"
-          } >> $GITHUB_OUTPUT
+          } >"$commitMsg"
         fi
+
+        # Guarantee a trailing newline, as for the PR body. Claude does not
+        # reliably end commit_message.txt with one, and without it the
+        # terminator lands on the message's last line and the runner fails
+        # with "Matching delimiter not found".
+        if [ -s "$commitMsg" ] && [ -n "$(tail -c 1 "$commitMsg")" ]; then
+          echo "" >>"$commitMsg"
+        fi
+
+        # Random delimiter, for the same reason as pr_body above.
+        cmDelim="GHCMEOF_$(openssl rand -hex 16 2>/dev/null || date +%s%N)"
+        {
+          echo "commit_message<<${cmDelim}"
+          cat "$commitMsg"
+          echo "${cmDelim}"
+        } >> $GITHUB_OUTPUT
+        rm -f "$commitMsg"
 
     - name: Create Pull Request
       if: steps.audit.outputs.has_vulnerabilities == 'true' && inputs.dry_run != 'true'
