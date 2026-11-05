@@ -107,7 +107,12 @@ jobs:
           if [[ ! -z $(which npm 2>/dev/null || echo "") ]]; then
             npmConfig=$(npm config get prefix)
             echo "npm config get prefix: $npmConfig"
-            if [ "$npmConfig" != "/home/runner/work/octane-actions/octane-actions/.config/npm/global" ]; then
+            if [[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+              if grep -Eq '^(prefix|globalconfig) *=' "$HOME/.npmrc" 2>/dev/null; then
+                echo "ERROR: ~/.npmrc sets a prefix, which nvm rejects"
+                result=1
+              fi
+            elif [ "$npmConfig" != "/home/runner/work/octane-actions/octane-actions/.config/npm/global" ]; then
               echo "ERROR setting npm config"
               result=1
             fi

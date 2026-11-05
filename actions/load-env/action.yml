@@ -42,10 +42,16 @@ runs:
         export YARN_CACHE_FOLDER=${rootDir}/.config/yarn/cache
         mkdir -p ${YARN_CACHE_FOLDER}
         if [[ ! -z $(which npm 2>/dev/null || echo "") ]]; then
-          mkdir -p ${rootDir}/.config/npm/global
           mkdir -p ${rootDir}/.config/npm/cache
-          npm config set prefix ${rootDir}/.config/npm/global
           npm config set cache ${rootDir}/.config/npm/cache
+          # nvm exits 11 on load or `nvm use` when ~/.npmrc sets a prefix, and the
+          # Node versions it installs keep their own writable global prefix.
+          if [[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+            npm config delete prefix
+          else
+            mkdir -p ${rootDir}/.config/npm/global
+            npm config set prefix ${rootDir}/.config/npm/global
+          fi
         fi
         export npm_config_cache=${rootDir}/.config/node/cache
         mkdir -p ${npm_config_cache}
