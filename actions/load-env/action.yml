@@ -44,10 +44,17 @@ runs:
         if [[ ! -z $(which npm 2>/dev/null || echo "") ]]; then
           mkdir -p ${rootDir}/.config/npm/cache
           npm config set cache ${rootDir}/.config/npm/cache
-          # nvm exits 11 on load or `nvm use` when ~/.npmrc sets a prefix, and the
-          # Node versions it installs keep their own writable global prefix.
-          if [[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+          # nvm exits 11 on load or `nvm use` when ~/.npmrc sets a prefix or
+          # globalconfig, and the Node versions it installs keep their own writable
+          # global prefix. Look for nvm where Octane's setup_nvm does; in container
+          # jobs HOME is /github/home, so ~/.nvm alone misses /home/docker/.nvm.
+          nvmFound=""
+          for nvmDir in "${NVM_DIR:-}" "$HOME/.nvm" /home/docker/.nvm; do
+            if [[ -n "$nvmDir" && -s "$nvmDir/nvm.sh" ]]; then nvmFound=1; fi
+          done
+          if [[ -n "$nvmFound" ]]; then
             npm config delete prefix
+            npm config delete globalconfig
           else
             mkdir -p ${rootDir}/.config/npm/global
             npm config set prefix ${rootDir}/.config/npm/global

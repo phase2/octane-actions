@@ -107,9 +107,13 @@ jobs:
           if [[ ! -z $(which npm 2>/dev/null || echo "") ]]; then
             npmConfig=$(npm config get prefix)
             echo "npm config get prefix: $npmConfig"
-            if [[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+            nvmFound=""
+            for nvmDir in "${NVM_DIR:-}" "$HOME/.nvm" /home/docker/.nvm; do
+              if [[ -n "$nvmDir" && -s "$nvmDir/nvm.sh" ]]; then nvmFound=1; fi
+            done
+            if [[ -n "$nvmFound" ]]; then
               if grep -Eq '^(prefix|globalconfig) *=' "$HOME/.npmrc" 2>/dev/null; then
-                echo "ERROR: ~/.npmrc sets a prefix, which nvm rejects"
+                echo "ERROR: ~/.npmrc sets a prefix or globalconfig, which nvm rejects"
                 result=1
               fi
             elif [ "$npmConfig" != "/home/runner/work/octane-actions/octane-actions/.config/npm/global" ]; then
